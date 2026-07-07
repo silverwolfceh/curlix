@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Postman for Bosch</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <span class="logo">&#9993; Postman for Bosch - from Tong with love ❤️</span>
+    <div class="header-actions">
+      <button class="btn-small" onclick="saveRequest()">&#128190; Save</button>
+      <button class="btn-small" onclick="exportAll()">&#8595; Export</button>
+      <label class="btn-small" style="cursor:pointer">&#8593; Import<input type="file" id="import-file" accept=".json" style="display:none" onchange="importFile(this)"/></label>
+      <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark theme">🌙</button>
+      <button class="btn-small" onclick="openSettingsTab()" title="Settings">&#9881; Settings</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- SIDEBAR -->
+    <aside id="sidebar">
+      <div class="sidebar-tabs">
+        <button class="sidebar-tab active" data-stab="requests">Requests</button>
+        <button class="sidebar-tab" data-stab="history">History</button>
+        <button class="sidebar-tab" data-stab="env">Env</button>
+      </div>
+
+      <div id="stab-requests" class="sidebar-panel active">
+        <div id="saved-list"></div>
+      </div>
+
+      <div id="stab-history" class="sidebar-panel">
+        <div id="history-list"></div>
+        <button class="btn-small env-add-btn" onclick="clearHistory()">Clear history</button>
+      </div>
+
+      <div id="stab-env" class="sidebar-panel">
+        <div id="env-list"></div>
+        <button class="btn-small env-add-btn" onclick="addEnvRow()">+ Add variable</button>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main>
+      <!-- Request tabs bar -->
+      <div class="req-tabbar" id="req-tabbar">
+        <!-- tabs injected by JS -->
+        <button class="req-tab-add" onclick="addRequestTab()" title="New tab">+</button>
+      </div>
+
+      <!-- Tab panels injected by JS -->
+      <div id="req-panels"></div>
+    </main>
+  </div>
+
+  <!-- Missing vars dialog -->
+  <div id="vars-dialog" class="dialog-backdrop hidden">
+    <div class="dialog">
+      <div class="dialog-title">Fill in missing values</div>
+      <div class="dialog-subtitle">These will be saved to your environment for reuse.</div>
+      <div id="vars-fields"></div>
+      <div class="dialog-actions">
+        <button class="btn-small" onclick="closeVarsDialog(false)">Skip</button>
+        <button class="btn-primary" onclick="closeVarsDialog(true)">Save &amp; continue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save dialog -->
+  <div id="save-dialog" class="dialog-backdrop hidden">
+    <div class="dialog">
+      <div class="dialog-title">Save Request</div>
+      <input id="save-name" type="text" placeholder="Request name" />
+      <div class="dialog-actions">
+        <button class="btn-small" onclick="closeSaveDialog()">Cancel</button>
+        <button class="btn-primary" onclick="confirmSave()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=3"></script>
+</body>
+</html>
