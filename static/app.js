@@ -16,6 +16,43 @@ function setCookie(name, value, days) {
 
 let _currentUserId = null;
 
+// ── Password show/hide eye toggle ─────────────────────────────────────────────
+const EYE_OPEN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7-3.5 7-10 7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_CLOSED = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-6.5 0-10-7-10-7a13.16 13.16 0 0 1 1.67-2.68"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c6.5 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/><path d="M1 1l22 22"/></svg>';
+
+function eyeToggle() {
+  return `<button type="button" class="eye-btn" tabindex="-1" title="Show/hide">${EYE_CLOSED}</button>`;
+}
+
+function bindEyeToggles(root = document) {
+  root.querySelectorAll('input[type="password"]').forEach(inp => {
+    if (inp.dataset.eyeBound) return;
+    inp.dataset.eyeBound = '1';
+    // Wrap if not already wrapped
+    if (!inp.parentElement.classList.contains('pw-wrap')) {
+      const wrap = document.createElement('div');
+      wrap.className = 'pw-wrap';
+      inp.parentNode.insertBefore(wrap, inp);
+      wrap.appendChild(inp);
+      wrap.insertAdjacentHTML('beforeend', eyeToggle());
+    }
+  });
+  root.querySelectorAll('.eye-btn').forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      const wrap = btn.parentElement;
+      const inp = wrap.querySelector('input');
+      if (!inp) return;
+      const isPw = inp.type === 'password';
+      inp.type = isPw ? 'text' : 'password';
+      btn.innerHTML = isPw ? EYE_OPEN : EYE_CLOSED;
+      btn.title = isPw ? 'Hide' : 'Show';
+    });
+  });
+}
+
+
 async function initUserId() {
   let uid = getCookie('opm_uid');
   if (!uid) {
@@ -86,7 +123,7 @@ async function persistEnvVars(env) {
   try {
     await apiFetch(API_BASE + '/api/env-vars', {
       method: 'PUT',
-      body: JSON.stringify(env.filter(e => e.k.trim())),
+      body: JSON.stringify({ vars: env.filter(e => e.k.trim()).map(e => ({ key: e.k, value: e.v })) }),
     });
   } catch (e) { console.error('[env] save failed:', e); }
 }
@@ -109,12 +146,42 @@ function addEnvRow(k = '', v = '') {
   row.className = 'env-row';
   row.innerHTML = `
     <input type="text" placeholder="NAME" value="${escAttr(k)}" />
-    <input type="text" placeholder="value" value="${escAttr(v)}" />
-    <button class="btn-remove" title="Remove" onclick="this.parentElement.remove(); persistEnvFromUI()">×</button>
+    <div class="pw-wrap">
+      <input type="password" placeholder="value" value="${escAttr(v)}" />
+      ${eyeToggle()}
+    </div>
+    <button class="btn-remove" title="Remove" onclick="removeEnvRow(this)">×</button>
   `;
   row.querySelectorAll('input').forEach(i => i.addEventListener('input', persistEnvFromUI));
   document.getElementById('env-list').appendChild(row);
+  bindEyeToggles(row);
   persistEnvFromUI();
+}
+
+function removeEnvRow(btn) {
+  const row = btn.parentElement;
+  const k = row.querySelector('input').value.trim();
+  showConfirm('Delete variable?', k ? `Remove "${k}" from environment?` : 'Remove this variable?', () => {
+    row.remove();
+    persistEnvFromUI();
+  });
+}
+
+// ── Confirm dialog (reusable) ─────────────────────────────────────────────────
+let _confirmCb = null;
+function showConfirm(title, msg, onOk, okText = 'Delete') {
+  document.getElementById('confirm-title').textContent = title || 'Are you sure?';
+  document.getElementById('confirm-msg').textContent = msg || '';
+  const okBtn = document.getElementById('confirm-ok');
+  okBtn.textContent = okText;
+  _confirmCb = onOk;
+  document.getElementById('confirm-dialog').classList.remove('hidden');
+}
+function closeConfirm(ok) {
+  document.getElementById('confirm-dialog').classList.add('hidden');
+  const cb = _confirmCb;
+  _confirmCb = null;
+  if (ok && cb) cb();
 }
 
 function persistEnvFromUI() {
@@ -658,6 +725,8 @@ function createTabPanel(id) {
     <div class="section-label">
       Headers
       <button class="btn-small" onclick="addHeader('${id}')">+ Add</button>
+      <button class="btn-small" onclick="addUAHeader('${id}')" title="Add User-Agent header">+ Add UA</button>
+      <button class="btn-small" onclick="addAuthHeader('${id}')" title="Add Authorization header">+ Add Auth</button>
       <button class="btn-small collapse-btn" onclick="toggleSection('${id}', 'headers-list')" title="Collapse/expand">▾</button>
     </div>
     <div id="headers-list-${id}" class="headers-list"></div>
@@ -697,7 +766,7 @@ function createTabPanel(id) {
         <div id="ai-active-${id}" class="ai-active-hint"></div>
         <textarea id="ai-desc-${id}" placeholder="Describe your request…"></textarea>
         <div class="ai-assist-actions">
-          <button id="ai-fill-btn-${id}" class="btn-primary" onclick="generateRequest('${id}')">Fill form</button>
+          <button id="ai-fill-btn-${id}" class="btn-primary" onclick="rebuildWithAI('${id}')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>Rebuild with AI</button>
           <span id="ai-error-${id}" class="error hidden"></span>
         </div>
         <div id="ai-log-${id}" class="ai-log hidden"></div>
@@ -705,11 +774,18 @@ function createTabPanel(id) {
     </div>
   `;
   document.getElementById('req-panels').appendChild(panel);
+  bindEyeToggles(panel);
 
-  document.getElementById('method-' + id).addEventListener('change', () => updateBodyVisibility(id));
   updateBodyVisibility(id);
   addHeader(id, 'Content-Type', 'application/json');
   refreshAiAssistHint(id);
+  // No auto-parse on paste; rebuild button handles command detection + AI fallback.
+  const descEl = document.getElementById('ai-desc-' + id);
+  if (descEl) {
+    descEl.addEventListener('paste', () => {
+      /* no auto-parse */
+    });
+  }
 }
 
 function createTabButton(id, label) {
@@ -839,6 +915,14 @@ function addHeader(id, key = '', value = '') {
   document.getElementById('headers-list-' + id).appendChild(row);
 }
 
+function addUAHeader(id) {
+  addHeader(id, 'User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0');
+}
+
+function addAuthHeader(id) {
+  addHeader(id, 'Authorization', 'Bearer {{AUTH_TOKEN}}');
+}
+
 function toggleSection(tabId, listPrefix) {
   const list = document.getElementById(listPrefix + '-' + tabId);
   if (!list) return;
@@ -861,7 +945,9 @@ function getHeaders(id) {
 
 function setHeaders(id, obj) {
   document.getElementById('headers-list-' + id).innerHTML = '';
-  Object.entries(obj || {}).forEach(([k, v]) => addHeader(id, k, v));
+  Object.entries(obj || {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([k, v]) => addHeader(id, k, v));
 }
 
 function toggleAiAssist(id) {
@@ -1099,12 +1185,16 @@ function promptMissingVars(missing) {
       const isSecret = /password|token|secret|key|auth/i.test(name);
       wrap.innerHTML = `
         <label>{{${escAttr(name)}}}</label>
-        <input type="${isSecret ? 'password' : 'text'}" data-varname="${escAttr(name)}" placeholder="${escAttr(name)}" />
+        <div class="pw-wrap">
+          <input type="${isSecret ? 'password' : 'text'}" data-varname="${escAttr(name)}" placeholder="${escAttr(name)}" />
+          ${isSecret ? eyeToggle() : ''}
+        </div>
       `;
       container.appendChild(wrap);
     });
     document.getElementById('vars-dialog').classList.remove('hidden');
     container.querySelector('input')?.focus();
+    bindEyeToggles(container);
   });
 }
 
@@ -1156,6 +1246,36 @@ function aiLogClear(id) {
   log.classList.add('hidden');
 }
 
+async function rebuildWithAI(id) {
+  const desc = document.getElementById('ai-desc-' + id);
+  const text = desc.value.trim();
+  document.getElementById('ai-error-' + id).classList.add('hidden');
+  aiLogClear(id);
+
+  if (!text) { showAiError(id, 'Paste a command or describe your request first.'); return; }
+
+  // Step 1: try local command parser
+  const type = detectCommandType(text);
+  if (type) {
+    let parsed = null;
+    try {
+      if (type === 'curl') parsed = parseCurl(text);
+      else if (type === 'powershell') parsed = parsePowerShell(text);
+      else if (type === 'node-fetch') parsed = parseNodeFetch(text);
+      else if (type === 'axios') parsed = parseAxios(text);
+    } catch (e) { /* fall through to AI */ }
+    if (parsed && parsed.url) {
+      applyParsedRequest(id, parsed);
+      aiLog(id, 'Detected ' + type + ' — parsed locally without AI.', 'ok');
+      showToast('Parsed ' + type + ' command', 'success');
+      return;
+    }
+    aiLog(id, 'Local parse incomplete — falling back to AI.', 'warn');
+  }
+
+  // Step 2: fall back to AI
+  await generateRequest(id);
+}
 async function generateRequest(id) {
   const apiBase = getAiBase();
   const apiKey = getAiKey();
@@ -1228,7 +1348,7 @@ async function generateRequest(id) {
     showAiError(id, 'Request failed: ' + err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Fill form';
+    btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>Rebuild with AI';
   }
 }
 
@@ -1265,13 +1385,15 @@ async function renderHistory() {
 }
 
 async function clearHistory() {
-  try {
-    await apiFetch(API_BASE + '/api/history', { method: 'DELETE' });
-    await renderHistory();
-    showToast('History cleared', 'success');
-  } catch (e) {
-    showToast('Failed to clear history', 'error');
-  }
+  showConfirm('Clear history?', 'Delete all history entries? This cannot be undone.', async () => {
+    try {
+      await apiFetch(API_BASE + '/api/history', { method: 'DELETE' });
+      await renderHistory();
+      showToast('History cleared', 'success');
+    } catch (e) {
+      showToast('Failed to clear history', 'error');
+    }
+  }, 'Clear');
 }
 
 // ── Saved requests sidebar ──────────────────────────────────────────────────
@@ -1300,9 +1422,11 @@ async function renderSidebar() {
 
 async function doDeleteSavedRequest(id, e) {
   e.stopPropagation();
-  await deleteSavedRequest(id);
-  renderSidebar();
-  showToast('Request deleted', 'success');
+  showConfirm('Delete request?', 'Delete this saved request?', async () => {
+    await deleteSavedRequest(id);
+    renderSidebar();
+    showToast('Request deleted', 'success');
+  });
 }
 
 function saveRequest() {
@@ -1506,4 +1630,6 @@ async function checkAdmin() {
   await renderSidebar();
   await renderHistory();
   checkAdmin();
+  addRequestTab(null); // open a blank request tab on startup
+  bindEyeToggles(); // attach eye toggles to all password fields
 })();

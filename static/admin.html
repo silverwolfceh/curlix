@@ -303,12 +303,11 @@
         if (r.ok) {
           const d = await r.json();
           if (d.admin) {
-            const token = document.cookie.match(/opm_admin_token=([^;]+)/);
-            if (token) {
-              setToken(token[1]);
-              showPanel();
-              return;
-            }
+            // Cookie opm_admin_token is HttpOnly so JS can't read it;
+            // /api/admin/check already confirmed the session via the cookie.
+            // Token for the Authorization header persists in localStorage from login.
+            showPanel();
+            return;
           }
         }
       } catch {}

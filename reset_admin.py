@@ -8,7 +8,7 @@ If new_password omitted, resets to "admin".
 import sys
 import hashlib
 import secrets
-from db import get_settings, save_settings
+from app.db import get_settings, save_settings
 
 
 def hash_password(password: str) -> str:

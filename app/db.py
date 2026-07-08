@@ -5,7 +5,7 @@ import os
 import json
 from datetime import datetime
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "curlix.db")
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "curlix.db")
 
 
 def get_db():
@@ -344,16 +344,27 @@ def list_env_vars(user_id):
 
 
 def save_env_vars(user_id, vars_list):
-    """vars_list is [{key, value}, ...]. Replaces all for user."""
+    """vars_list is [{key, value}, ...]. Replaces all for user.
+    Tolerates {k, v} aliases. Wrapped so a bad row never leaves a lock.
+    """
     conn = get_db()
-    conn.execute("DELETE FROM env_vars WHERE user_id=?", (user_id,))
-    for v in vars_list:
-        conn.execute(
-            "INSERT INTO env_vars (user_id, key, value) VALUES (?, ?, ?)",
-            (user_id, v["key"], v["value"]),
-        )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("DELETE FROM env_vars WHERE user_id=?", (user_id,))
+        for v in vars_list:
+            key = v.get("key", v.get("k"))
+            value = v.get("value", v.get("v"))
+            if not key:
+                continue
+            conn.execute(
+                "INSERT INTO env_vars (user_id, key, value) VALUES (?, ?, ?)",
+                (user_id, key, value),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def delete_env_var(user_id, env_id):

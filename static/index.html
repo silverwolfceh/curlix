@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Curlix - Capture.Rebuild.Replay</title>
   <link rel="icon" type="image/png" href="favicon.png?v=2" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
   <header>
@@ -35,13 +35,13 @@
       </div>
 
       <div id="stab-history" class="sidebar-panel">
-        <div id="history-list"></div>
         <button class="btn-small env-add-btn" onclick="clearHistory()">Clear history</button>
+        <div id="history-list"></div>
       </div>
 
       <div id="stab-env" class="sidebar-panel">
-        <div id="env-list"></div>
         <button class="btn-small env-add-btn" onclick="addEnvRow()">+ Add variable</button>
+        <div id="env-list"></div>
       </div>
     </aside>
 
@@ -102,6 +102,23 @@
     </div>
   </div>
 
-  <script src="app.js?v=16"></script>
+  <!-- Confirm dialog (reusable) -->
+  <div id="confirm-dialog" class="dialog-backdrop hidden">
+    <div class="dialog">
+      <div id="confirm-title" class="dialog-title">Are you sure?</div>
+      <div id="confirm-msg" class="dialog-subtitle"></div>
+      <div class="dialog-actions">
+        <button class="btn-small" id="confirm-cancel">Cancel</button>
+        <button class="btn-danger" id="confirm-ok">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="command-parser.js?v=4"></script>
+  <script src="app.js?v=26"></script>
+  <script>
+    document.getElementById('confirm-cancel').addEventListener('click', () => closeConfirm(false));
+    document.getElementById('confirm-ok').addEventListener('click', () => closeConfirm(true));
+  </script>
 </body>
 </html>

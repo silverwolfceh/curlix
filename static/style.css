@@ -95,7 +95,9 @@ header {
 
 /* Sidebar */
 #sidebar {
-  width: 220px;
+  width: 33vw;
+  min-width: 240px;
+  max-width: 520px;
   flex-shrink: 0;
   background: var(--surface);
   border-right: 1px solid var(--border);
@@ -106,7 +108,7 @@ header {
   transition: margin-left 0.2s ease, transform 0.2s ease;
 }
 #sidebar.sidebar-hidden {
-  margin-left: -220px;
+  margin-left: -33vw;
 }
 
 #sidebar-toggle {
@@ -203,6 +205,13 @@ header {
   display: flex;
   gap: 4px;
   align-items: center;
+  flex-wrap: nowrap;
+}
+
+.env-row input[type="text"][placeholder="NAME"],
+.env-row > input:first-child {
+  flex: 0 0 80px;
+  width: 80px;
 }
 
 .env-row input {
@@ -210,6 +219,15 @@ header {
   font-size: 12px;
   padding: 5px 8px;
   min-width: 0;
+}
+
+.env-row .pw-wrap {
+  flex: 1;
+  min-width: 0;
+}
+.env-row .pw-wrap input {
+  font-size: 12px;
+  padding: 5px 28px 5px 8px;
 }
 
 .env-row .btn-remove {
@@ -226,6 +244,31 @@ header {
 }
 
 .env-row .btn-remove:hover { color: var(--red); border-color: var(--red); }
+
+.env-val-wrap {
+  flex: 1;
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  align-items: center;
+}
+.env-val-wrap .env-val { flex: 1; min-width: 0; }
+.env-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 13px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.12s, border-color 0.12s;
+}
+.env-toggle:hover { color: var(--accent); border-color: var(--accent); }
 
 .env-add-btn {
   margin: 6px 8px 10px;
@@ -292,6 +335,7 @@ main {
   overflow-y: visible;
   padding: 18px 20px 24px;
   max-width: 980px;
+  margin: 0 auto;
 }
 
 /* Request tabs */
@@ -442,7 +486,7 @@ textarea {
 /* Buttons */
 .btn-primary {
   background: var(--accent);
-  color: #000;
+  color: #fff;
   border: none;
   padding: 8px 20px;
   border-radius: var(--radius);
@@ -689,6 +733,36 @@ textarea {
   align-self: flex-start;
 }
 
+.pw-wrap {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 0;
+  position: relative;
+}
+.pw-wrap input {
+  flex: 1;
+  padding-right: 32px;
+}
+.eye-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+.eye-btn:hover {
+  color: var(--text);
+}
+
 .settings-saved-msg {
   font-size: 13px;
   color: var(--green);
@@ -924,6 +998,19 @@ textarea {
 
 /* Spinner */
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes ai-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.82); }
+}
+@keyframes ai-glow {
+  0% { filter: drop-shadow(0 0 0 currentColor); }
+  50% { filter: drop-shadow(0 0 4px currentColor); }
+  100% { filter: drop-shadow(0 0 0 currentColor); }
+}
+.ai-spin {
+  animation: ai-pulse 0.9s ease-in-out infinite, ai-glow 1.8s ease-in-out infinite;
+  transform-origin: center;
+}
 .spinner {
   display: inline-block;
   width: 14px;
