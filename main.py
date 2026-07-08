@@ -190,7 +190,6 @@ def _requests_call(req: ProxyRequest, auth) -> dict:
 @app.post("/api/proxy")
 async def proxy(req: ProxyRequest):
     session = requests.session()
-    session.trust_env = False
     session.verify = False
     if req.use_ntlm:
         session.auth = HttpNtlmAuth(req.ntlm_user, req.ntlm_pass)
@@ -199,11 +198,11 @@ async def proxy(req: ProxyRequest):
     else:
         session.auth = None
 
-    proxies = {
-        "http": _build_proxy_url(req.proxy_url, req.proxy_user, req.proxy_pass) if req.use_proxy and req.proxy_url else None,
-        "https": _build_proxy_url(req.proxy_url, req.proxy_user, req.proxy_pass) if req.use_proxy and req.proxy_url else None
-    }
-    session.proxies = proxies
+    # Only override proxies when an explicit proxy is requested; otherwise let
+    # requests honor env (HTTP_PROXY/HTTPS_PROXY) — matches generated.py.
+    if req.use_proxy and req.proxy_url:
+        purl = _build_proxy_url(req.proxy_url, req.proxy_user, req.proxy_pass)
+        session.proxies = {"http": purl, "https": purl}
     try:
         resp = await asyncio.to_thread(
             session.request,
@@ -216,6 +215,7 @@ async def proxy(req: ProxyRequest):
             timeout=30,
         )
     except requests.exceptions.RequestException as e:
+        print(e, flush=True)
         raise HTTPException(status_code=502, detail=str(e))
 
     return {
