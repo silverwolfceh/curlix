@@ -1,11 +1,11 @@
-﻿import json
+import json
 import logging
 import asyncio
-import httpx
+import uuid
 import requests
 from requests_kerberos import HTTPKerberosAuth, OPTIONAL
 from requests_ntlm import HttpNtlmAuth
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -15,7 +15,21 @@ from urllib.parse import urlparse, urlunparse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+from db import init_db, ensure_user, ensure_user_sync, get_settings, save_settings
+
 app = FastAPI()
+init_db()
+
+# Auto-create default admin on first run
+settings = get_settings()
+admin = settings.get("admin")
+if not admin:
+    import hashlib, secrets
+    salt = secrets.token_hex(16)
+    pw_hash = f"{salt}${hashlib.sha256((salt + 'admin').encode()).hexdigest()}"
+    settings["admin"] = {"username": "admin", "password_hash": pw_hash}
+    save_settings(settings)
+    logger.info("[main] Created default admin user")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,6 +38,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ── User resolution middleware ────────────────────────────────────────────────
+
+@app.middleware("http")
+async def resolve_user(request: Request, call_next):
+    """Resolve user_id from cookie or header. Auto-create user. Set cookie."""
+    # Skip user middleware for admin page and API endpoints
+    if request.url.path == "/admin" or request.url.path.startswith("/api/"):
+        return await call_next(request)
+
+    user_id = request.cookies.get("opm_uid")
+    if not user_id:
+        header = request.headers.get("x-user-id", "")
+        if header:
+            user_id = header
+
+    if not user_id:
+        user_id = str(uuid.uuid4())
+
+    resolved = ensure_user_sync(user_id)
+    if resolved:
+        user_id = resolved
+
+    ensure_user(user_id)
+
+    # Set BEFORE call_next so route handlers can access it
+    request.state.user_id = user_id
+
+    response = await call_next(request)
+    existing_cookie = response.headers.get("set-cookie", "")
+    if "opm_uid=" not in existing_cookie:
+        response.set_cookie(
+            key="opm_uid",
+            value=user_id,
+            path="/",
+            httponly=True,
+            samesite="lax",
+            max_age=365 * 24 * 3600,
+        )
+
+    request.state.user_id = user_id
+    return response
+
+
+# ── Mount admin router ────────────────────────────────────────────────────────
+
+from admin import router as admin_router
+app.include_router(admin_router)
+
+
+# ── Original v1 endpoints (kept for backward compat) ─────────────────────────
 
 class ProxyRequest(BaseModel):
     url: str
@@ -44,10 +109,10 @@ class ProxyRequest(BaseModel):
 
 class AIFillRequest(BaseModel):
     description: str
-    api_base: str
-    api_key: str
+    api_base: Optional[str] = None
+    api_key: Optional[str] = None
     model: str = "gpt-4o-mini"
-    call_ai: str = "responses"  # responses | completions
+    call_ai: str = "responses"
     response_style: str = "strict_json"
     proxy_url: Optional[str] = None
     proxy_user: Optional[str] = None
@@ -125,16 +190,15 @@ def _requests_call(req: ProxyRequest, auth) -> dict:
 @app.post("/api/proxy")
 async def proxy(req: ProxyRequest):
     session = requests.session()
-    session.trust_env = False  # ignore system proxy settings
-    session.verify = False  # ignore SSL certs
+    session.trust_env = False
+    session.verify = False
     if req.use_ntlm:
         session.auth = HttpNtlmAuth(req.ntlm_user, req.ntlm_pass)
     elif req.use_kerberos:
         session.auth = HTTPKerberosAuth(mutual_authentication=OPTIONAL)
     else:
         session.auth = None
-    
-    # Setting proxies
+
     proxies = {
         "http": _build_proxy_url(req.proxy_url, req.proxy_user, req.proxy_pass) if req.use_proxy and req.proxy_url else None,
         "https": _build_proxy_url(req.proxy_url, req.proxy_user, req.proxy_pass) if req.use_proxy and req.proxy_url else None
@@ -186,7 +250,6 @@ def _ai_fill_call(req: AIFillRequest) -> str:
             "model": req.model,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                # {"role": "system", "content": style_note},
                 {"role": "user", "content": user_text},
             ],
         }
@@ -271,11 +334,32 @@ def _ai_fill_call(req: AIFillRequest) -> str:
     return resp.text
 
 
-
-
-
 @app.post("/api/ai-fill")
 async def ai_fill(req: AIFillRequest):
+    # Server-side fallback: fill missing AI config from saved settings.
+    # Lets admin-configured key work for non-admin homepage users without
+    # re-entering it. Client may send empty values when settings aren't loaded.
+    s = get_settings()
+    if not req.api_base:
+        req.api_base = s.get("ai_base") or s.get("ai-base") or ""
+    if not req.api_key:
+        req.api_key = s.get("ai_key") or s.get("ai-key") or ""
+    if not req.model or req.model == "gpt-4o-mini":
+        req.model = s.get("ai_model") or s.get("ai-model") or req.model or "gpt-4o-mini"
+    if not req.call_ai or req.call_ai == "responses":
+        req.call_ai = s.get("ai_call") or s.get("ai-call") or req.call_ai or "responses"
+    if not req.response_style or req.response_style == "strict_json":
+        req.response_style = s.get("ai_response_style") or s.get("ai-response-style") or req.response_style or "strict_json"
+    if not req.proxy_url:
+        req.proxy_url = s.get("proxy_url") or None
+        req.proxy_user = s.get("proxy_user") or None
+        req.proxy_pass = s.get("proxy_pass") or None
+
+    if not req.api_base:
+        raise HTTPException(status_code=400, detail="API Base URL not configured. Admin must set it in Settings.")
+    if not req.api_key:
+        raise HTTPException(status_code=400, detail="API Key not configured. Admin must set it in Settings.")
+
     print(f"[ai-fill] received: api_base={req.api_base} model={req.model} call_ai={req.call_ai} style={req.response_style} proxy={req.proxy_url}", flush=True)
     try:
         raw = await asyncio.to_thread(_ai_fill_call, req)
@@ -330,6 +414,16 @@ async def ai_fill(req: AIFillRequest):
     logger.info("AI-fill OK done")
     return result
 
+
+@app.get("/admin")
+async def admin_redirect():
+    from fastapi.responses import HTMLResponse
+    html = open("static/admin.html", encoding="utf-8").read()
+    return HTMLResponse(html, headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    })
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
 

@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, 1.0" />
+  <link rel="icon" type="image/png" href="favicon.png?v=2" />
+  <title>Admin Panel</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #1a1b1e; --surface: #25262b; --border: #373a40;
+      --accent: #4dabf7; --accent-hover: #74c0fc; --text: #c1c2c5;
+      --text-dim: #5c5f66; --green: #40c057; --red: #fa5252;
+      --radius: 6px;
+    }
+    [data-theme="light"] {
+      --bg: #f8f9fa; --surface: #ffffff; --border: #dee2e6;
+      --accent: #1971c2; --accent-hover: #1864ab; --text: #212529;
+      --text-dim: #868e96; --green: #2f9e44; --red: #e03131;
+    }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    .header { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--border); }
+    .header h1 { font-size: 18px; font-weight: 600; }
+    .header-actions { display: flex; gap: 8px; align-items: center; }
+    .btn-small { padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); cursor: pointer; font-size: 13px; }
+    .btn-small:hover { border-color: var(--accent); }
+    .btn-primary { padding: 8px 16px; border: none; border-radius: var(--radius); background: var(--accent); color: #fff; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-danger { padding: 4px 10px; border: none; border-radius: var(--radius); background: var(--red); color: #fff; cursor: pointer; font-size: 12px; }
+    .btn-sm { padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); cursor: pointer; font-size: 12px; }
+
+    /* Login */
+    .login-page { display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+    .login-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 40px; width: 360px; }
+    .login-box h2 { margin-bottom: 20px; font-size: 20px; text-align: center; }
+    .login-box input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font-size: 14px; margin-bottom: 12px; }
+    .login-box input:focus { outline: none; border-color: var(--accent); }
+    .login-box .btn-primary { width: 100%; margin-top: 8px; }
+    .login-error { color: var(--red); font-size: 13px; margin-top: 10px; text-align: center; }
+
+    /* Admin panel */
+    .admin-panel { display: none; }
+    .admin-panel.active { display: block; }
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--surface); }
+    .tab-btn { padding: 10px 20px; border: none; background: none; color: var(--text-dim); cursor: pointer; font-size: 14px; border-bottom: 2px solid transparent; }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-btn:hover { color: var(--text); }
+    .tab-content { display: none; padding: 20px; }
+    .tab-content.active { display: block; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
+    th { color: var(--text-dim); font-weight: 500; }
+    .role-admin { color: var(--green); font-weight: 600; }
+    .role-user { color: var(--text-dim); }
+
+    /* Forms */
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; margin-bottom: 6px; font-size: 13px; color: var(--text-dim); }
+    .form-group input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font-size: 14px; max-width: 400px; }
+    .form-group input:focus { outline: none; border-color: var(--accent); }
+    .form-row { display: flex; gap: 12px; margin-bottom: 12px; max-width: 400px; }
+    .form-row input { flex: 1; max-width: none; }
+
+    /* Toast */
+    #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 8px; }
+    .toast { padding: 10px 18px; border-radius: var(--radius); font-size: 13px; color: #fff; background: var(--accent); box-shadow: 0 4px 12px rgba(0,0,0,0.3); animation: toast-in 0.2s ease; }
+    .toast-success { background: var(--green); }
+    .toast-error   { background: var(--red); }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    .hidden { display: none !important; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <!-- Login page -->
+  <div id="login-page" class="login-page">
+    <div class="login-box">
+      <h2>🔒 Admin Login</h2>
+      <input id="login-user" type="text" placeholder="Username" />
+      <input id="login-pass" type="password" placeholder="Password" />
+      <button id="login-btn" class="btn-primary" onclick="doLogin()">Login</button>
+      <div id="login-error" class="login-error hidden"></div>
+    </div>
+  </div>
+
+  <!-- Admin panel -->
+  <div id="admin-panel" class="admin-panel">
+    <div class="header">
+      <h1>⚙️ Admin Panel</h1>
+      <div class="header-actions">
+        <button class="btn-small" onclick="toggleTheme()">🌙</button>
+        <button class="btn-small" onclick="doLogout()">Logout</button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="tab-ai">AI Settings</button>
+      <button class="tab-btn" data-tab="tab-users">Users</button>
+      <button class="tab-btn" data-tab="tab-create">Create User</button>
+    </div>
+
+    <!-- AI Settings tab -->
+    <div id="tab-ai" class="tab-content active">
+      <h3 style="margin-bottom: 16px;">AI Configuration (shared across all users)</h3>
+      <div class="form-group">
+        <label>API Base URL</label>
+        <input id="ai-base" type="text" placeholder="https://api.openai.com/v1" />
+      </div>
+      <div class="form-group">
+        <label>API Key</label>
+        <input id="ai-key" type="password" placeholder="sk-..." />
+      </div>
+      <div class="form-group">
+        <label>Model</label>
+        <input id="ai-model" type="text" placeholder="gpt-4o-mini" />
+      </div>
+      <div class="form-group">
+        <label>Call AI API</label>
+        <select id="ai-call" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:14px;max-width:400px">
+          <option value="responses">Responses (/responses)</option>
+          <option value="completions">Completions (/chat/completions)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Response Style</label>
+        <select id="ai-style" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:14px;max-width:400px">
+          <option value="strict_json">Strict JSON</option>
+          <option value="compact">Compact</option>
+          <option value="detailed">Detailed</option>
+        </select>
+      </div>
+
+      <hr style="border-color: var(--border); margin: 24px 0;" />
+
+      <h3 style="margin-bottom: 16px;">Admin Credentials</h3>
+      <div class="form-group">
+        <label>Admin Username</label>
+        <input id="admin-user" type="text" placeholder="admin" />
+      </div>
+      <div class="form-group">
+        <label>New Password (leave blank to keep current)</label>
+        <input id="admin-pass" type="password" placeholder="new password" />
+      </div>
+
+      <div style="margin-top: 20px;">
+        <button class="btn-primary" onclick="doSaveSettings()">Save Settings</button>
+      </div>
+      <div id="save-msg" style="color: var(--green); margin-top: 10px; font-size: 13px;" class="hidden">Settings saved.</div>
+    </div>
+
+    <!-- Users tab -->
+    <div id="tab-users" class="tab-content">
+      <h3 style="margin-bottom: 16px;">Manage Users</h3>
+      <table id="users-table">
+        <thead><tr><th>UUID</th><th>Handle</th><th>Role</th><th>Created</th><th>Actions</th></tr></thead>
+        <tbody id="users-tbody"></tbody>
+      </table>
+      <div id="users-loading" style="color: var(--text-dim); padding: 40px; text-align: center;">Loading...</div>
+    </div>
+
+    <!-- Create user tab -->
+    <div id="tab-create" class="tab-content">
+      <h3 style="margin-bottom: 16px;">Create New User</h3>
+      <div class="form-row">
+        <input id="new-user" type="text" placeholder="Username" />
+        <input id="new-pass" type="password" placeholder="Password" />
+      </div>
+      <div class="form-group">
+        <label>Role</label>
+        <select id="new-role" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:14px;">
+          <option value="user">user</option>
+          <option value="admin">admin</option>
+        </select>
+      </div>
+      <button class="btn-primary" onclick="doCreateUser()">Create User</button>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script>
+    const API_BASE = '';
+
+    // Theme
+    (function() {
+      const t = localStorage.getItem('curlix:theme');
+      if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    })();
+
+    function toggleTheme() {
+      const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+      const next = isLight ? 'dark' : 'light';
+      localStorage.setItem('curlix:theme', next);
+      if (next === 'light') document.documentElement.setAttribute('data-theme', 'light');
+      else document.documentElement.removeAttribute('data-theme');
+      document.querySelector('.header-actions .btn-small')?.textContent && (null);
+    }
+
+    function showToast(msg, type) {
+      const c = document.getElementById('toast-container');
+      const t = document.createElement('div');
+      t.className = 'toast toast-' + (type || 'info');
+      t.textContent = msg;
+      c.appendChild(t);
+      setTimeout(() => t.remove(), 3000);
+    }
+
+    // Tabs
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(btn.dataset.tab).classList.add('active');
+      });
+    });
+
+    // API
+    function getToken() {
+      return localStorage.getItem('curlix:admin-token');
+    }
+
+    function setToken(t) {
+      localStorage.setItem('curlix:admin-token', t);
+    }
+
+    async function apiFetch(url, opts = {}) {
+      const headers = { 'Content-Type': 'application/json' };
+      const token = getToken();
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      const r = await fetch(url, { ...opts, headers });
+      if (r.status === 401) {
+        localStorage.removeItem('curlix:admin-token');
+        showLogin();
+        return null;
+      }
+      return r;
+    }
+
+    // Auth
+    async function doLogin() {
+      const user = document.getElementById('login-user').value.trim();
+      const pass = document.getElementById('login-pass').value;
+      if (!user || !pass) return;
+
+      const btn = document.getElementById('login-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>Logging in...';
+
+      const errEl = document.getElementById('login-error');
+      errEl.classList.add('hidden');
+
+      try {
+        const r = await fetch(API_BASE + '/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: user, password: pass }),
+        });
+        if (r.ok) {
+          const d = await r.json();
+          setToken(d.token);
+          showPanel();
+        } else {
+          const d = await r.json();
+          errEl.textContent = d.detail || 'Login failed';
+          errEl.classList.remove('hidden');
+        }
+      } catch (e) {
+        errEl.textContent = e.message;
+        errEl.classList.remove('hidden');
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Login';
+    }
+
+    async function doLogout() {
+      try { await fetch(API_BASE + '/api/logout', { method: 'POST' }); } catch {}
+      localStorage.removeItem('curlix:admin-token');
+      showLogin();
+    }
+
+    function showLogin() {
+      document.getElementById('login-page').style.display = '';
+      document.getElementById('admin-panel').classList.remove('active');
+    }
+
+    async function showPanel() {
+      document.getElementById('login-page').style.display = 'none';
+      document.getElementById('admin-panel').classList.add('active');
+      await loadSettings();
+      await loadUsers();
+    }
+
+    // Auto-check existing session
+    (async function() {
+      try {
+        const r = await fetch(API_BASE + '/api/admin/check');
+        if (r.ok) {
+          const d = await r.json();
+          if (d.admin) {
+            const token = document.cookie.match(/opm_admin_token=([^;]+)/);
+            if (token) {
+              setToken(token[1]);
+              showPanel();
+              return;
+            }
+          }
+        }
+      } catch {}
+      showLogin();
+    })();
+
+    // Settings
+    async function loadSettings() {
+      try {
+        const r = await apiFetch(API_BASE + '/api/settings');
+        if (!r.ok) return;
+        const s = await r.json();
+        document.getElementById('ai-base').value = s.ai_base || s['ai-base'] || '';
+        document.getElementById('ai-key').value = s.ai_key || s['ai-key'] || '';
+        document.getElementById('ai-model').value = s.ai_model || s['ai-model'] || 'gpt-4o-mini';
+        document.getElementById('ai-call').value = s.ai_call || s['ai-call'] || 'responses';
+        document.getElementById('ai-style').value = s.ai_response_style || s['ai-response-style'] || 'strict_json';
+      } catch {}
+    }
+
+    async function doSaveSettings() {
+      const data = {
+        ai_base: document.getElementById('ai-base').value,
+        ai_key: document.getElementById('ai-key').value,
+        ai_model: document.getElementById('ai-model').value,
+        ai_call: document.getElementById('ai-call').value,
+        ai_response_style: document.getElementById('ai-style').value,
+      };
+      // Only send admin credential fields when non-empty — backend treats
+      // their presence as a credential-change request and returns early,
+      // skipping AI config save.
+      const adminUser = document.getElementById('admin-user').value.trim();
+      const adminPass = document.getElementById('admin-pass').value;
+      if (adminUser) data.admin_username = adminUser;
+      if (adminPass) data.admin_password = adminPass;
+      const msgEl = document.getElementById('save-msg');
+
+      try {
+        const r = await apiFetch(API_BASE + '/api/settings', {
+          method: 'POST',
+          body: JSON.stringify(data),
+        });
+        if (r.ok) {
+          msgEl.textContent = 'Settings saved.';
+          msgEl.classList.remove('hidden');
+          setTimeout(() => msgEl.classList.add('hidden'), 2000);
+          showToast('Settings saved', 'success');
+          document.getElementById('admin-pass').value = '';
+        }
+      } catch (e) {
+        showToast('Save failed: ' + e.message, 'error');
+      }
+    }
+
+    // Users
+    async function loadUsers() {
+      const tbody = document.getElementById('users-tbody');
+      const loading = document.getElementById('users-loading');
+      loading.classList.remove('hidden');
+      tbody.innerHTML = '';
+
+      try {
+        const r = await apiFetch(API_BASE + '/api/admin/users');
+        loading.classList.add('hidden');
+        if (!r.ok) return;
+        const users = await r.json();
+        users.forEach(u => {
+          const tr = document.createElement('tr');
+          const roleClass = u.role === 'admin' ? 'role-admin' : 'role-user';
+          tr.innerHTML = `
+            <td style="font-family:monospace;font-size:12px">${u.id}</td>
+            <td>${u.handle || u.id}</td>
+            <td class="${roleClass}">${u.role}</td>
+            <td>${u.created_at || ''}</td>
+            <td>
+              <button class="btn-sm" onclick="toggleRole('${u.id}', '${u.role}')">
+                ${u.role === 'admin' ? '→ user' : '→ admin'}
+              </button>
+              <button class="btn-danger" onclick="deleteUser('${u.id}')">Delete</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (e) {
+        loading.textContent = 'Error: ' + e.message;
+      }
+    }
+
+    async function toggleRole(id, currentRole) {
+      const newRole = currentRole === 'admin' ? 'user' : 'admin';
+      try {
+        await apiFetch(API_BASE + '/api/admin/users/' + id, {
+          method: 'PUT',
+          body: JSON.stringify({ role: newRole }),
+        });
+        showToast('Role updated to ' + newRole, 'success');
+        loadUsers();
+      } catch (e) {
+        showToast('Failed: ' + e.message, 'error');
+      }
+    }
+
+    async function deleteUser(id) {
+      if (!confirm('Delete user ' + id + '? This is irreversible.')) return;
+      try {
+        await apiFetch(API_BASE + '/api/admin/users/' + id, { method: 'DELETE' });
+        showToast('User deleted', 'success');
+        loadUsers();
+      } catch (e) {
+        showToast('Failed: ' + e.message, 'error');
+      }
+    }
+
+    async function doCreateUser() {
+      const user = document.getElementById('new-user').value.trim();
+      const pass = document.getElementById('new-pass').value;
+      const role = document.getElementById('new-role').value;
+      if (!user || !pass) { showToast('Username and password required', 'error'); return; }
+
+      try {
+        const r = await apiFetch(API_BASE + '/api/admin/users', {
+          method: 'POST',
+          body: JSON.stringify({ username: user, password: pass, role }),
+        });
+        if (r.ok) {
+          showToast('User ' + user + ' created', 'success');
+          document.getElementById('new-user').value = '';
+          document.getElementById('new-pass').value = '';
+          loadUsers();
+        }
+      } catch (e) {
+        showToast('Failed: ' + e.message, 'error');
+      }
+    }
+
+    // Enter key for login
+    document.getElementById('login-pass').addEventListener('keydown', e => {
+      if (e.key === 'Enter') doLogin();
+    });
+    document.getElementById('login-user').addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('login-pass').focus();
+    });
+  </script>
+</body>
+</html>

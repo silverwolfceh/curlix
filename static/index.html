@@ -3,13 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Postman for Bosch</title>
+  <title>Curlix - Capture.Rebuild.Replay</title>
+  <link rel="icon" type="image/png" href="favicon.png?v=2" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header>
-    <span class="logo">&#9993; Postman for Bosch - from Tong with love ❤️</span>
+    <span class="logo"><img src="logo.png" alt="Curlix" class="logo-img" />Capture - Rebuild - Replay</span>
     <div class="header-actions">
+      <button class="btn-small" id="admin-btn" style="display:none" title="Admin panel">&#128274; Admin</button>
       <button class="btn-small" onclick="saveRequest()">&#128190; Save</button>
       <button class="btn-small" onclick="exportAll()">&#8595; Export</button>
       <label class="btn-small" style="cursor:pointer">&#8593; Import<input type="file" id="import-file" accept=".json" style="display:none" onchange="importFile(this)"/></label>
@@ -21,6 +23,7 @@
   <div class="layout">
     <!-- SIDEBAR -->
     <aside id="sidebar">
+      <button id="sidebar-toggle" onclick="toggleSidebar()" title="Hide sidebar">◀</button>
       <div class="sidebar-tabs">
         <button class="sidebar-tab active" data-stab="requests">Requests</button>
         <button class="sidebar-tab" data-stab="history">History</button>
@@ -55,6 +58,11 @@
     </main>
   </div>
 
+  <!-- Show-sidebar button (visible when sidebar hidden) -->
+  <button id="sidebar-show" onclick="toggleSidebar()" title="Show sidebar" class="hidden">▶</button>
+  <!-- Mobile backdrop -->
+  <div id="sidebar-backdrop" class="sidebar-backdrop hidden" onclick="toggleSidebar()"></div>
+
   <!-- Missing vars dialog -->
   <div id="vars-dialog" class="dialog-backdrop hidden">
     <div class="dialog">
@@ -80,6 +88,20 @@
     </div>
   </div>
 
-  <script src="app.js?v=3"></script>
+  <!-- Import dialog -->
+  <div id="import-dialog" class="dialog-backdrop hidden">
+    <div class="dialog">
+      <div class="dialog-title">Import requests</div>
+      <div id="import-count" class="dialog-subtitle"></div>
+      <input id="import-name" type="text" placeholder="Request name (for sidebar save)" />
+      <div class="dialog-actions">
+        <button class="btn-small" onclick="closeImportDialog(false)">Cancel</button>
+        <button class="btn-small" onclick="closeImportDialog('tabs')">Open as tabs</button>
+        <button class="btn-primary" onclick="closeImportDialog('sidebar')">Save to sidebar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=15"></script>
 </body>
 </html>

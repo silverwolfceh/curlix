@@ -4,3 +4,4 @@ httpx
 requests
 requests_ntlm
 requests_kerberos
+bcrypt
