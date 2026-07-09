@@ -1,8 +1,11 @@
 """Proxy router: /api/proxy — sends HTTP requests server-side (avoids browser CORS).
 
-Supports proxy, NTLM (Windows SSPI), Kerberos. SSL verification disabled for
-corporate compatibility. Honors env proxies (HTTP_PROXY/HTTPS_PROXY) unless an
-explicit proxy is requested — matches the generated.py script behavior.
+Supports proxy, NTLM (requests_ntlm), Kerberos (requests_kerberos). SSL verification
+off for corporate compat. Honors env proxies (HTTP_PROXY/HTTPS_PROXY) unless an
+explicit proxy is requested — matches generated.py.
+
+NTLM/Kerberos imports are lazy: if requests_ntlm/requests_kerberos aren't
+installed (e.g. on Vercel Linux serverless), the feature is silently disabled.
 """
 import asyncio
 import logging
@@ -10,8 +13,6 @@ from urllib.parse import urlparse, urlunparse
 from typing import Optional
 
 import requests
-from requests_kerberos import HTTPKerberosAuth, OPTIONAL
-from requests_ntlm import HttpNtlmAuth
 from fastapi import APIRouter, HTTPException
 
 from .models import ProxyRequest
@@ -34,9 +35,19 @@ async def proxy(req: ProxyRequest):
     session = requests.session()
     session.verify = False
     if req.use_ntlm:
-        session.auth = HttpNtlmAuth(req.ntlm_user, req.ntlm_pass)
+        try:
+            from requests_ntlm import HttpNtlmAuth
+            session.auth = HttpNtlmAuth(req.ntlm_user, req.ntlm_pass)
+        except ImportError:
+            logger.warning("NTLM requested but requests_ntlm not installed; ignoring")
+            session.auth = None
     elif req.use_kerberos:
-        session.auth = HTTPKerberosAuth(mutual_authentication=OPTIONAL)
+        try:
+            from requests_kerberos import HTTPKerberosAuth, OPTIONAL
+            session.auth = HTTPKerberosAuth(mutual_authentication=OPTIONAL)
+        except ImportError:
+            logger.warning("Kerberos requested but requests_kerberos not installed; ignoring")
+            session.auth = None
     else:
         session.auth = None
 

@@ -1,7 +1,7 @@
 """Reset admin password.
 
-Usage:
-    .venv\\Scripts\\python.exe reset_admin.py [new_password]
+Usage (with Turso env vars set):
+    TURSO_URL=... TURSO_TOKEN=... uv run python reset_admin.py [new_password]
 
 If new_password omitted, resets to "admin".
 """

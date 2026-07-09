@@ -1,4 +1,5 @@
 """Curlix entrypoint: assembles the app, mounts routers, serves static files."""
+import os
 import uuid
 
 from fastapi import Request
@@ -81,7 +82,8 @@ for r in (
 
 @app.get("/admin")
 async def admin_redirect():
-    html = open("static/admin.html", encoding="utf-8").read()
+    html_path = os.path.join(os.path.dirname(__file__), "static", "admin.html")
+    html = open(html_path, encoding="utf-8").read()
     return HTMLResponse(html, headers={
         "Cache-Control": "no-cache, no-store, must-revalidate",
         "Pragma": "no-cache",
@@ -89,7 +91,7 @@ async def admin_redirect():
     })
 
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+app.mount("/", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static"), html=True), name="static")
 
 
 if __name__ == "__main__":

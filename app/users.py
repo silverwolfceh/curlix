@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from .db import (
     get_settings, save_settings, get_all_users, update_user_role,
     delete_user, create_user, ensure_user, rename_user, ensure_user_sync,
-    create_request, save_env_vars, get_db,
+    create_request, save_env_vars, execute,
 )
 from .auth import get_user_id, get_admin_from_request, hash_password
 from .models import RenameRequest, SwitchDeviceRequest, UserCreateRequest, UserUpdateRequest
@@ -66,11 +66,9 @@ async def user_info(request: Request):
     """Get current user info (id + alias)."""
     await get_user_id(request)
     user_id = request.state.user_id
-    conn = get_db()
-    alias = conn.execute(
-        "SELECT handle FROM user_aliases WHERE user_id = ?", (user_id,)
-    ).fetchone()
-    conn.close()
+    alias = execute(
+        "SELECT handle FROM user_aliases WHERE user_id = ?", [user_id]
+    ).first()
     return {"user_id": user_id, "handle": alias["handle"] if alias else user_id}
 
 

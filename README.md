@@ -40,7 +40,7 @@ Built for corporate networks: NTLM/Kerberos auth, HTTP proxy support, and SSL ve
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 ### Run
@@ -54,6 +54,10 @@ App served at **http://localhost:5555**.
 
 Admin panel at **http://localhost:5555/admin**.
 
+> **Local dev (file SQLite):** without `TURSO_URL`/`TURSO_TOKEN` set, the app
+> falls back to a local file `curlix.db`. Set the Turso env vars to use the
+> serverless DB even locally.
+
 ### Default admin
 
 On first run a default admin is created:
@@ -64,9 +68,51 @@ On first run a default admin is created:
 **Change this immediately** via the admin panel. If you forget the password, reset it:
 
 ```powershell
-.venv\Scripts\python.exe reset_admin.py [new_password]
+TURSO_URL=... TURSO_TOKEN=... uv run python reset_admin.py [new_password]
 # defaults to "admin" if no arg
 ```
+
+---
+
+## Deploy to Vercel (free tier)
+
+Curlix runs on Vercel serverless with [Turso](https://turso.tech) as the
+SQLite backend (so data persists across cold starts). No credit card needed
+for either.
+
+### 1. Create a Turso database
+
+```bash
+pip install turso
+turso auth signup          # sign in with GitHub
+turso db create curlix
+turso db tokens create curlix   # → copy the token
+turso db show curlix --url      # → copy the libsql:// URL
+```
+
+### 2. Set Vercel env vars
+
+In your Vercel project settings → Environment Variables, add:
+
+| Name | Value |
+|-----|-------|
+| `TURSO_URL` | `libsql://curlix-<you>.turso.io` |
+| `TURSO_TOKEN` | (the token from `turso db tokens create`) |
+
+### 3. Deploy
+
+Push to GitHub → import the repo into Vercel → deploy. `vercel.json` routes
+all traffic to `main.py` (FastAPI ASGI). Tables auto-create on first cold start.
+
+### Caveats (Vercel/Linux)
+
+- **Kerberos auth unavailable** — `requests_kerberos` needs system GSSAPI
+  libs that don't exist on Vercel. The option is silently ignored if the lib
+  isn't installed. NTLM (`requests_ntlm`) still works.
+- **Cold starts** ~1-2s after idle; warm requests are fast.
+- `curlix.db` file is unused on Vercel (Turso is the source of truth).
+
+---
 
 ---
 
