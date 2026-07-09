@@ -1,4 +1,4 @@
-"""SQLite database layer for Curlix v2 (Turso/libSQL backend for serverless)."""
+"""Database layer for Curlix (Turso/libSQL over HTTP)."""
 import os
 import json
 

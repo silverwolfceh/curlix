@@ -20,9 +20,7 @@ uv run uvicorn main:app --reload
 - Admin panel at `http://localhost:5555/admin`
 - **Always use `uv run ...`** — it targets the `.venv` env. Bare/system uvicorn runs a different Python missing `requests-negotiate-sspi`, `requests-kerberos`, etc.
 - Default admin: `admin` / `admin`. Reset: `TURSO_URL=... TURSO_TOKEN=... uv run python reset_admin.py [new_pw]`
-- **DB backend auto-selects:**
-  - **Turso (libSQL over HTTP)** when `TURSO_URL` + `TURSO_TOKEN` env vars set (use for Vercel/serverless — SQLite file won't persist).
-  - **Local SQLite file** (`curlix.db` at repo root) otherwise (local dev default).
+- **DB backend: Turso (libSQL over HTTP)** — requires `TURSO_URL` + `TURSO_TOKEN` env vars. No local SQLite fallback.
 
 ## Repo layout
 
@@ -31,12 +29,11 @@ main.py              # entrypoint: user middleware + mount routers + static
 reset_admin.py       # admin password reset script
 gettoken.py          # MSAL token helper (standalone, unrelated to app runtime)
 requirements.txt
-curlix.db            # SQLite (DO NOT commit; regenerated)
 static/              # frontend (index.html, admin.html, app.js, style.css, logo.png, favicon.png)
 app/                 # backend package
   __init__.py
   config.py          # app factory: init_db, default admin bootstrap, CORS, logging
-  db.py              # SQLite data layer (DB_PATH → ../curlix.db)
+  db.py              # Turso data layer (CRUD over app/turso.py)
   models.py          # all Pydantic models
   auth.py            # password hashing, session tokens, admin/user resolution
   auth_routes.py     # /api/login, /api/logout, /api/admin/check
@@ -55,8 +52,7 @@ app/                 # backend package
 - **Backend = `app/` package.** All modules use relative imports (`from .db import`, `from .auth import`). `main.py` and `reset_admin.py` use `from app.config import` / `from app.db import`.
 - **No new top-level `.py` files for features.** Add a new module under `app/`, then `app.include_router(...)` in `main.py`.
 - **`collections_routes.py`, not `collections.py`** — `collections` shadows the stdlib and breaks fastapi imports. Never name a module `collections.py`.
-- **DB lives at project root** (`curlix.db`), even though `db.py` is in `app/`. `DB_PATH = ../curlix.db`. Don't move it.
-  Only used when `TURSO_URL`/`TURSO_TOKEN` env vars are NOT set (local-dev fallback). On Vercel/serverless, set those env vars → Turso (libSQL) HTTP backend is used instead.
+- **DB = Turso (libSQL over HTTP).** Requires `TURSO_URL` + `TURSO_TOKEN`. Access via `app/turso.py` (`execute`/`execute_many`).
 - **DB migrations are idempotent** `CREATE TABLE IF NOT EXISTS` (no more `ALTER TABLE ADD COLUMN` — all columns declared inline in DDL). Add new columns by editing the DDL in `init_db()` (`app/db.py`), never destructive schema changes.
 - **One route file per feature domain.** Each defines `router = APIRouter()` and is mounted in `main.py`.
 
@@ -65,7 +61,7 @@ app/                 # backend package
 - **No build step.** Vanilla JS in `static/app.js` (~1300 lines, single file), HTML in `static/index.html` + `static/admin.html`, CSS in `static/style.css`.
 - **Cache-bust after JS changes:** bump `app.js?v=N` in `static/index.html`. Current: `v=16`.
 - **Admin page (`/admin`) sends no-cache headers** (route in `main.py`) so `admin.html` updates apply immediately. Do not add cache headers elsewhere.
-- **All state lives server-side now** (per-user, in SQLite) — saved requests, history, env vars, settings. Theme + sidebar-hidden + AI config (local override) stay in `localStorage` with `curlix:` prefix.
+- **All state lives server-side now** (per-user, in Turso) — saved requests, history, env vars, settings. Theme + sidebar-hidden + AI config (local override) stay in `localStorage` with `curlix:` prefix.
 
 ### localStorage keys (`curlix:` prefix)
 - `curlix:theme` — `light` or unset (dark)
@@ -96,7 +92,7 @@ No test suite. Verify manually:
 1. Restart uvicorn after backend changes.
 2. Hard-refresh browser (Ctrl+Shift+R) after frontend changes — bump `app.js?v=N` if needed.
 3. Smoke test: `GET /api/admin/check`, login, `GET /api/settings`, `GET /api/saved-requests`.
-4. For DB schema changes: run `uv run python -c "from app.db import init_db; init_db()"` (with `TURSO_URL`/`TURSO_TOKEN` set if testing Turso) then check `curlix.db` columns via `PRAGMA table_info` (local SQLite only).
+4. For DB schema changes: run `uv run python -c "from app.db import init_db; init_db()"` (needs `TURSO_URL`/`TURSO_TOKEN`) then inspect tables via `turso db shell curlix`.
 
 ## Communication style
 

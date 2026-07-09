@@ -1,15 +1,9 @@
-"""DB access layer for Curlix.
+"""Turso (libSQL over HTTP) DB access layer for Curlix.
 
-Two backends, auto-selected by env vars:
-- **Turso (libSQL) over HTTP** when `TURSO_URL` + `TURSO_TOKEN` are set
-  (use this on Vercel / serverless — SQLite file won't persist there).
-- **Local SQLite file** (`curlix.db` at repo root) otherwise (local dev).
-
-Both expose the same `execute(sql, args)` / `execute_many(statements)` API so
-the rest of `db.py` is backend-agnostic.
+Requires `TURSO_URL` + `TURSO_TOKEN` env vars. Used on Vercel/serverless
+where a SQLite file won't persist.
 """
 import os
-import sqlite3
 
 TURSO_URL = os.environ.get("TURSO_URL", "").strip()
 # JWT tokens contain no whitespace; strip stray newlines from pasted values.
@@ -22,11 +16,6 @@ if _https_url.startswith("libsql://"):
 elif _https_url.startswith("libsql+wss://"):
     _https_url = "https://" + _https_url[len("libsql+wss://"):]
 
-USE_TURSO = bool(_https_url and TURSO_TOKEN)
-
-# Local SQLite path (only used when not on Turso).
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "curlix.db")
-
 
 class TursoResult:
     def __init__(self, rows=None, last_insert_rowid=None, rows_affected=0):
@@ -37,8 +26,6 @@ class TursoResult:
     def first(self):
         return self.rows[0] if self.rows else None
 
-
-# ── Turso HTTP backend ────────────────────────────────────────────────────────
 
 def _turso_arg(v):
     if v is None:
@@ -134,7 +121,8 @@ def _turso_result_from(res):
     return TursoResult(rows=rows, last_insert_rowid=lir, rows_affected=ra)
 
 
-def _turso_execute(sql, args=None):
+def execute(sql, args=None):
+    """Run one SQL statement. Returns TursoResult."""
     stmt = {"sql": sql}
     if args:
         stmt["args"] = [_turso_arg(a) for a in args]
@@ -149,7 +137,7 @@ def _turso_execute(sql, args=None):
     return _turso_result_from(res)
 
 
-def _turso_execute_many(statements):
+def execute_many(statements):
     """Run N statements in one HTTP round-trip (not atomic, but fast).
     Each statement is (sql, args_or_None). Returns list of TursoResult.
     """
@@ -160,63 +148,4 @@ def _turso_execute_many(statements):
             stmt["args"] = [_turso_arg(a) for a in args]
         reqs.append({"type": "execute", "stmt": stmt})
     results = _turso_call({"requests": reqs})
-    out = []
-    for res in results:
-        out.append(_turso_result_from(res))
-    return out
-
-
-# ── Local SQLite backend ──────────────────────────────────────────────────────
-
-def _sqlite_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
-def _sqlite_execute(sql, args=None):
-    conn = _sqlite_conn()
-    try:
-        cur = conn.execute(sql, args or [])
-        rows = [dict(r) for r in cur.fetchall()]
-        lir = cur.lastrowid
-        ra = cur.rowcount
-        conn.commit()
-        return TursoResult(rows=rows, last_insert_rowid=lir, rows_affected=ra)
-    finally:
-        conn.close()
-
-
-def _sqlite_execute_many(statements):
-    conn = _sqlite_conn()
-    out = []
-    try:
-        for sql, args in statements:
-            cur = conn.execute(sql, args or [])
-            rows = [dict(r) for r in cur.fetchall()]
-            out.append(TursoResult(rows=rows, last_insert_rowid=cur.lastrowid, rows_affected=cur.rowcount))
-        conn.commit()
-        return out
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-
-# ── Public API ─────────────────────────────────────────────────────────────────
-
-def execute(sql, args=None):
-    """Run one SQL statement. Returns TursoResult."""
-    if USE_TURSO:
-        return _turso_execute(sql, args)
-    return _sqlite_execute(sql, args)
-
-
-def execute_many(statements):
-    """Run N statements in one transaction. Returns list of TursoResult."""
-    if USE_TURSO:
-        return _turso_execute_many(statements)
-    return _sqlite_execute_many(statements)
+    return [_turso_result_from(res) for res in results]

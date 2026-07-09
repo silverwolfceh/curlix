@@ -2,7 +2,7 @@
 
 > Capture — Rebuild — Replay
 
-A self-hosted, single-binary HTTP client and API workbench. Send requests, manage environments, build requests from natural language via AI, and replay saved requests. No accounts, no cloud — all data stays in a local SQLite database.
+A self-hosted HTTP client and API workbench. Send requests, manage environments, build requests from natural language via AI, and replay saved requests. No accounts, no cloud — all data stays in your Turso (libSQL) database.
 
 Built for corporate networks: NTLM/Kerberos auth, HTTP proxy support, and SSL verification disabled for internal endpoints.
 
@@ -10,7 +10,7 @@ Built for corporate networks: NTLM/Kerberos auth, HTTP proxy support, and SSL ve
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/silverwolfceh/curlix&repository-slug=curlix&branch=feature/curlix-deploy)
 
-> **Deploying to Vercel?** Set these env vars in your Vercel project (Settings → Environment Variables): `TURSO_URL` (libsql://…) and `TURSO_TOKEN` (token). See [Deploy to Vercel](#deploy-to-vercel-free-tier) below.
+> **Requires** `TURSO_URL` + `TURSO_TOKEN` env vars (Turso libSQL backend). See [Deploy to Vercel](#deploy-to-vercel-free-tier) below.
 
 ---
 
@@ -47,6 +47,13 @@ python -m venv .venv
 uv pip install -r requirements.txt
 ```
 
+Set Turso env vars (copy `.env.example` and edit, or export in shell):
+
+```powershell
+$env:TURSO_URL = "libsql://curlix-<you>.turso.io"
+$env:TURSO_TOKEN = "<token>"
+```
+
 ### Run
 
 ```powershell
@@ -58,9 +65,8 @@ App served at **http://localhost:5555**.
 
 Admin panel at **http://localhost:5555/admin**.
 
-> **Local dev (file SQLite):** without `TURSO_URL`/`TURSO_TOKEN` set, the app
-> falls back to a local file `curlix.db`. Set the Turso env vars to use the
-> serverless DB even locally.
+> **Turso required:** the app needs `TURSO_URL` + `TURSO_TOKEN` set.
+> Copy `.env.example` or export them before running.
 
 ### Default admin
 
@@ -114,7 +120,7 @@ all traffic to `main.py` (FastAPI ASGI). Tables auto-create on first cold start.
   libs that don't exist on Vercel. The option is silently ignored if the lib
   isn't installed. NTLM (`requests_ntlm`) still works.
 - **Cold starts** ~1-2s after idle; warm requests are fast.
-- `curlix.db` file is unused on Vercel (Turso is the source of truth).
+- **`curlix.db` is unused** (Turso is the source of truth).
 
 ---
 
@@ -157,7 +163,7 @@ Managed in the Env sidebar panel. Key/value pairs. Referenced as `{{KEY}}` in UR
 
 ## Data storage
 
-All data in a single SQLite file: **`curlix.db`** (next to `main.py`).
+All data in Turso (libSQL over HTTP). Tables auto-create on first cold start.
 
 | Table | Content |
 |-------|---------|
@@ -169,10 +175,10 @@ All data in a single SQLite file: **`curlix.db`** (next to `main.py`).
 | `env_vars` | Environment variables |
 | `collections` | Request collections |
 
-Inspect directly:
+Inspect via the Turso CLI:
 
-```powershell
-.venv\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect('curlix.db'); print([r[0] for r in c.execute('SELECT name FROM sqlite_master WHERE type=\"table\"').fetchall()])"
+```bash
+turso db shell curlix
 ```
 
 ---
@@ -184,7 +190,7 @@ Single-file FastAPI backend + vanilla JS/HTML/CSS frontend. No build step.
 ```
 main.py          # FastAPI app: /api/proxy, /api/ai-fill, static mount, /admin route
 admin.py         # Admin/auth router: users, saved requests, history, env, collections, settings
-db.py            # SQLite layer (init, migrations, CRUD)
+db.py            # Turso data layer (init, CRUD)
 gettoken.py      # Token helper
 reset_admin.py   # Admin password reset script
 static/
@@ -230,7 +236,7 @@ Useful for debugging, CI, or sharing a reproducible request outside the app.
 - **Always use `.venv\Scripts\uvicorn.exe`**, not system uvicorn — the system Python may lack `requests-negotiate-sspi` and other deps.
 - Static files are served via `StaticFiles` mount. Bump `app.js?v=N` in `index.html` after JS changes to bust browser cache.
 - `/admin` route sends no-cache headers so admin HTML updates are picked up immediately.
-- DB migrations are idempotent `ALTER TABLE ADD COLUMN` checks in `init_db()`.
+- DB migrations are idempotent `CREATE TABLE IF NOT EXISTS` in `init_db()` (`app/db.py`).
 
 ---
 

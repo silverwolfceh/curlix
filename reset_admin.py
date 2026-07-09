@@ -1,6 +1,6 @@
 """Reset admin password.
 
-Usage (with Turso env vars set):
+Requires Turso env vars:
     TURSO_URL=... TURSO_TOKEN=... uv run python reset_admin.py [new_password]
 
 If new_password omitted, resets to "admin".
