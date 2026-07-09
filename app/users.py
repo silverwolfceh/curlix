@@ -29,8 +29,8 @@ async def user_rename(request: Request, body: RenameRequest):
     if not handle.replace("_", "").replace("-", "").isalnum():
         raise HTTPException(400, "Handle can only contain letters, numbers, underscores, hyphens")
 
+    await get_user_id(request)
     user_id = request.state.user_id
-    ensure_user(user_id)
     try:
         rename_user(user_id, handle)
         return {"ok": True, "handle": handle}

@@ -12,7 +12,8 @@ import os
 import sqlite3
 
 TURSO_URL = os.environ.get("TURSO_URL", "").strip()
-TURSO_TOKEN = os.environ.get("TURSO_TOKEN", "").strip()
+# JWT tokens contain no whitespace; strip stray newlines from pasted values.
+TURSO_TOKEN = "".join(os.environ.get("TURSO_TOKEN", "").split())
 
 # Normalize libsql:// → https:// for the HTTP API.
 _https_url = TURSO_URL
