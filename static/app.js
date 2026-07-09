@@ -776,6 +776,7 @@ function createTabPanel(id) {
   document.getElementById('req-panels').appendChild(panel);
   bindEyeToggles(panel);
 
+  document.getElementById('method-' + id).addEventListener('change', () => updateBodyVisibility(id));
   updateBodyVisibility(id);
   addHeader(id, 'Content-Type', 'application/json');
   refreshAiAssistHint(id);
