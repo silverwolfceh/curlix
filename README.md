@@ -8,6 +8,10 @@ Built for corporate networks: NTLM/Kerberos auth, HTTP proxy support, and SSL ve
 
 ![Curlix](static/logo.png)
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/silverwolfceh/curlix&repository-slug=curlix&branch=feature/curlix-deploy)
+
+> **Deploying to Vercel?** Set these env vars in your Vercel project (Settings → Environment Variables): `TURSO_URL` (libsql://…) and `TURSO_TOKEN` (token). See [Deploy to Vercel](#deploy-to-vercel-free-tier) below.
+
 ---
 
 ## Features
