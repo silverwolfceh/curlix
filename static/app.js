@@ -1,20 +1,6 @@
-// ── v2.0: API-based storage (SQLite backend) ───────────────────────────────
+// ── Curlix frontend: dual storage (anonymous=localStorage, account=server) ──
 
 const API_BASE = '';
-
-// ── User identity (UUID) ────────────────────────────────────────────────────
-
-function getCookie(name) {
-  const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
-  return m ? m[2] : null;
-}
-
-function setCookie(name, value, days) {
-  const expires = new Date(Date.now() + days * 864e5).toUTCString();
-  document.cookie = name + '=' + value + '; expires=' + expires + '; path=/; SameSite=Lax';
-}
-
-let _currentUserId = null;
 
 // ── Password show/hide eye toggle ─────────────────────────────────────────────
 const EYE_OPEN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7-3.5 7-10 7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -53,44 +39,79 @@ function bindEyeToggles(root = document) {
 }
 
 
-async function initUserId() {
-  let uid = getCookie('opm_uid');
-  if (!uid) {
-    const header = document.querySelector('meta[name="x-user-id"]')?.content;
-    if (header) uid = header;
-  }
-  if (!uid) {
-    uid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-      const r = (Math.random() * 16) | 0;
-      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-    });
-    setCookie('opm_uid', uid, 365);
-  }
-  _currentUserId = uid;
-  // Check if user exists, auto-create if not
+// ── Session & crypto ──────────────────────────────────────────────────────
+//
+// Anonymous: saved requests, history, env vars live in localStorage only.
+// Logged in:  saved/history sync to server (plaintext, per user); env vars are
+//             AES-GCM encrypted client-side with a key derived (PBKDF2) from the
+//             account password. Server stores only ciphertext + iv.
+// The env key is held in sessionStorage, so a new tab/reload that lost it must
+// re-prompt the password to unlock env vars.
+
+let _session = null;      // {user_id, username, env_salt} | null
+let _envKey = null;       // CryptoKey | null (only when logged in & unlocked)
+
+async function loadSession() {
   try {
-    const r = await fetch(API_BASE + '/api/user/info');
-    if (!r.ok) {
-      // Auto-create by calling switch-device
-      const r2 = await fetch(API_BASE + '/api/switch-device', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identity: uid }),
-      });
-      if (r2.ok) {
-        const d = await r2.json();
-        _currentUserId = d.user_id;
-        setCookie('opm_uid', d.user_id, 365);
-      }
-    }
-  } catch (e) {
-    console.warn('[user] init failed:', e);
-  }
-  return _currentUserId;
+    const r = await fetch(API_BASE + '/api/user/me');
+    if (r.ok) { _session = await r.json(); return; }
+  } catch (e) { console.warn('[session] load failed:', e); }
+  _session = null;
+}
+
+function isLoggedIn() { return !!_session; }
+function envLocked() { return isLoggedIn() && !_envKey; }
+
+// base64 helpers
+function bufToB64(buf) {
+  const b = new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+  return btoa(s);
+}
+function b64ToBuf(b64) {
+  const s = atob(b64);
+  const buf = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) buf[i] = s.charCodeAt(i);
+  return buf;
+}
+
+async function deriveEnvBits(password, saltB64) {
+  const enc = new TextEncoder();
+  const km = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
+  return new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: b64ToBuf(saltB64), iterations: 200000, hash: 'SHA-256' }, km, 256));
+}
+
+async function setEnvKeyFromPassword(password, saltB64) {
+  const bits = await deriveEnvBits(password, saltB64);
+  sessionStorage.setItem('curlix:env-key', bufToB64(bits));
+  _envKey = await crypto.subtle.importKey('raw', bits, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+
+async function loadEnvKeyIfPresent() {
+  const b64 = sessionStorage.getItem('curlix:env-key');
+  if (!b64) { _envKey = null; return; }
+  try {
+    _envKey = await crypto.subtle.importKey('raw', b64ToBuf(b64), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  } catch (e) { _envKey = null; }
+}
+
+function clearEnvKey() { sessionStorage.removeItem('curlix:env-key'); _envKey = null; }
+
+async function encryptStr(key, str) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(str));
+  return { iv: bufToB64(iv), value: bufToB64(new Uint8Array(ct)) };
+}
+
+async function decryptStr(key, ivB64, valueB64) {
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64ToBuf(ivB64) }, key, b64ToBuf(valueB64));
+  return new TextDecoder().decode(pt);
 }
 
 function getApiHeaders(extra = {}) {
-  const h = { 'X-User-ID': _currentUserId, ...extra };
+  const h = { ...extra };
   const adminToken = localStorage.getItem('curlix:admin-token');
   if (adminToken) h['Authorization'] = 'Bearer ' + adminToken;
   return h;
@@ -98,34 +119,48 @@ function getApiHeaders(extra = {}) {
 
 async function apiFetch(url, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...getApiHeaders(opts.headers) };
-  const r = await fetch(url, { ...opts, headers });
-  if (r.status === 401) {
-    // Token expired or not logged in — clear and redirect
-    localStorage.removeItem('curlix:admin-token');
-    window.location.href = '/admin';
-    return null;
-  }
-  return r;
+  return fetch(url, { ...opts, headers });
 }
 
 // ── Environment variables ───────────────────────────────────────────────────
 
 async function fetchEnvVars() {
-  try {
-    const r = await apiFetch(API_BASE + '/api/env-vars');
-    if (!r.ok) return [];
-    const data = await r.json();
-    return data.map(e => ({ k: e.key, v: e.value }));
-  } catch { return []; }
+  if (isLoggedIn()) {
+    if (!_envKey) return []; // locked — nothing to show until unlocked
+    try {
+      const r = await apiFetch(API_BASE + '/api/env-vars');
+      if (!r.ok) return [];
+      const data = await r.json();
+      const out = [];
+      for (const e of data) {
+        try { out.push({ k: e.key, v: e.iv ? await decryptStr(_envKey, e.iv, e.value) : e.value }); }
+        catch (err) { out.push({ k: e.key, v: '' }); }
+      }
+      return out;
+    } catch { return []; }
+  }
+  // Anonymous: localStorage (plaintext, browser-only)
+  try { return JSON.parse(localStorage.getItem('curlix:env') || '[]'); } catch { return []; }
 }
 
 async function persistEnvVars(env) {
-  try {
-    await apiFetch(API_BASE + '/api/env-vars', {
-      method: 'PUT',
-      body: JSON.stringify({ vars: env.filter(e => e.k.trim()).map(e => ({ key: e.k, value: e.v })) }),
-    });
-  } catch (e) { console.error('[env] save failed:', e); }
+  if (isLoggedIn()) {
+    if (!_envKey) return;
+    try {
+      const enc = [];
+      for (const e of env) {
+        if (!e.k.trim()) continue;
+        const { iv, value } = await encryptStr(_envKey, e.v || '');
+        enc.push({ key: e.k, value, iv });
+      }
+      await apiFetch(API_BASE + '/api/env-vars', {
+        method: 'PUT',
+        body: JSON.stringify({ vars: enc }),
+      });
+    } catch (e) { console.error('[env] save failed:', e); }
+    return;
+  }
+  try { localStorage.setItem('curlix:env', JSON.stringify(env)); } catch (e) { console.error('[env] save failed:', e); }
 }
 
 function getEnvMap() {
@@ -184,6 +219,7 @@ function closeConfirm(ok) {
   if (ok && cb) cb();
 }
 
+let _envPersistTimer = null;
 function persistEnvFromUI() {
   const rows = document.querySelectorAll('.env-row');
   const env = [];
@@ -193,8 +229,9 @@ function persistEnvFromUI() {
     const v = inputs[1].value;
     if (k) env.push({ k, v });
   });
-  _envList = env;
-  persistEnvVars(env);
+  _envList = env; // sync, so resolveVars() sees latest immediately
+  clearTimeout(_envPersistTimer);
+  _envPersistTimer = setTimeout(() => persistEnvVars(env), 400);
 }
 
 function renderEnv() {
@@ -234,87 +271,80 @@ function getAiModel()      { return localStorage.getItem('curlix:ai-model') || '
 function getAiCall()       { return localStorage.getItem('curlix:ai-call') || ''; }
 function getAiResponseStyle() { return localStorage.getItem('curlix:ai-response-style') || ''; }
 
-// ── Saved requests (per user) ───────────────────────────────────────────────
+// ── Saved requests ────────────────────────────────────────────────────────
 
 async function fetchSavedRequests() {
-  try {
-    const r = await apiFetch(API_BASE + '/api/saved-requests');
-    if (!r.ok) return [];
-    return await r.json();
-  } catch { return []; }
+  if (isLoggedIn()) {
+    try {
+      const r = await apiFetch(API_BASE + '/api/saved-requests');
+      if (!r.ok) return [];
+      return await r.json();
+    } catch { return []; }
+  }
+  try { return JSON.parse(localStorage.getItem('curlix:saved') || '[]'); } catch { return []; }
 }
 
 async function createSavedRequest(data) {
-  try {
-    const r = await apiFetch(API_BASE + '/api/saved-requests', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-    return await r.json();
-  } catch (e) { console.error('[request] create failed:', e); return null; }
+  if (isLoggedIn()) {
+    try {
+      const r = await apiFetch(API_BASE + '/api/saved-requests', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+      return await r.json();
+    } catch (e) { console.error('[request] create failed:', e); return null; }
+  }
+  let list;
+  try { list = JSON.parse(localStorage.getItem('curlix:saved') || '[]'); } catch { list = []; }
+  const id = Date.now();
+  list.unshift({ id, ...data });
+  localStorage.setItem('curlix:saved', JSON.stringify(list));
+  return { id };
 }
 
 async function deleteSavedRequest(id) {
+  if (isLoggedIn()) {
+    try {
+      await apiFetch(API_BASE + '/api/saved-requests/' + id, { method: 'DELETE' });
+    } catch (e) { console.error('[request] delete failed:', e); }
+    return;
+  }
   try {
-    await apiFetch(API_BASE + '/api/saved-requests/' + id, { method: 'DELETE' });
+    const list = JSON.parse(localStorage.getItem('curlix:saved') || '[]').filter(r => String(r.id) !== String(id));
+    localStorage.setItem('curlix:saved', JSON.stringify(list));
   } catch (e) { console.error('[request] delete failed:', e); }
 }
 
-// ── History (per user) ──────────────────────────────────────────────────────
+// ── History ──────────────────────────────────────────────────────────────────
 
 async function fetchHistory(limit = 100, offset = 0) {
-  try {
-    const r = await apiFetch(API_BASE + '/api/history?limit=' + limit + '&offset=' + offset);
-    if (!r.ok) return [];
-    return await r.json();
-  } catch { return []; }
+  if (isLoggedIn()) {
+    try {
+      const r = await apiFetch(API_BASE + '/api/history?limit=' + limit + '&offset=' + offset);
+      if (!r.ok) return [];
+      return await r.json();
+    } catch { return []; }
+  }
+  try { return JSON.parse(localStorage.getItem('curlix:history') || '[]'); } catch { return []; }
 }
 
 async function pushHistoryEntry(entry) {
+  if (isLoggedIn()) {
+    try {
+      await apiFetch(API_BASE + '/api/history', {
+        method: 'POST',
+        body: JSON.stringify(entry),
+      });
+      renderHistory();
+    } catch (e) { console.error('[history] push failed:', e); }
+    return;
+  }
   try {
-    await apiFetch(API_BASE + '/api/history', {
-      method: 'POST',
-      body: JSON.stringify(entry),
-    });
-    // Refresh history sidebar so the new entry shows up.
+    const list = JSON.parse(localStorage.getItem('curlix:history') || '[]');
+    list.unshift({ id: Date.now(), ...entry });
+    localStorage.setItem('curlix:history', JSON.stringify(list.slice(0, 200)));
     renderHistory();
   } catch (e) { console.error('[history] push failed:', e); }
-}
-
-// ── Rename handle ───────────────────────────────────────────────────────────
-
-async function renameHandle(newHandle) {
-  try {
-    const r = await apiFetch(API_BASE + '/api/user/rename', {
-      method: 'POST',
-      body: JSON.stringify({ handle: newHandle }),
-    });
-    if (r.ok) {
-      _currentUserId = r.headers.get('x-user-id') || _currentUserId;
-      return { ok: true };
-    }
-    const d = await r.json();
-    return { ok: false, error: d.detail || 'Failed to rename' };
-  } catch (e) { return { ok: false, error: e.message }; }
-}
-
-// ── Switch device ───────────────────────────────────────────────────────────
-
-async function switchDevice(identity) {
-  try {
-    const r = await apiFetch(API_BASE + '/api/switch-device', {
-      method: 'POST',
-      body: JSON.stringify({ identity }),
-    });
-    if (r.ok) {
-      const d = await r.json();
-      _currentUserId = d.user_id;
-      setCookie('opm_uid', d.user_id, 365);
-      return { ok: true };
-    }
-    const d = await r.json();
-    return { ok: false, error: d.detail || 'Identity not found' };
-  } catch (e) { return { ok: false, error: e.message }; }
 }
 
 // ── Theme ───────────────────────────────────────────────────────────────────
@@ -344,24 +374,13 @@ function toggleTheme() {
 // ── Sidebar toggle ────────────────────────────────────────────────────────
 function applySidebarState(hidden) {
   const sidebar = document.getElementById('sidebar');
-  const showBtn = document.getElementById('sidebar-show');
-  const backdrop = document.getElementById('sidebar-backdrop');
+  const toggle = document.getElementById('sidebar-toggle-btn');
   if (hidden) {
     sidebar.classList.add('sidebar-hidden');
-    if (showBtn) showBtn.classList.remove('hidden');
-    if (backdrop) backdrop.classList.add('hidden');
   } else {
     sidebar.classList.remove('sidebar-hidden');
-    if (showBtn) showBtn.classList.add('hidden');
-    // On mobile, show backdrop when sidebar open
-    if (backdrop && window.matchMedia('(max-width: 768px)').matches) {
-      backdrop.classList.remove('hidden');
-    } else if (backdrop) {
-      backdrop.classList.add('hidden');
-    }
   }
-  const toggle = document.getElementById('sidebar-toggle');
-  if (toggle) toggle.textContent = hidden ? '▶' : '◀';
+  if (toggle) toggle.textContent = hidden ? '☰' : '☷';
 }
 
 function toggleSidebar() {
@@ -373,6 +392,20 @@ function toggleSidebar() {
 (function initSidebar() {
   const hidden = localStorage.getItem('curlix:sidebar-hidden') === '1';
   applySidebarState(hidden);
+
+  // On mobile, tap outside sidebar to close it
+  const main = document.querySelector('main');
+  if (main) {
+    main.addEventListener('click', e => {
+      if (window.innerWidth > 768) return;
+      const sidebar = document.getElementById('sidebar');
+      if (!sidebar || sidebar.classList.contains('sidebar-hidden')) return;
+      // Sidebar is visible
+      const toggleBtn = document.getElementById('sidebar-toggle-btn');
+      if (toggleBtn && (e.target === toggleBtn || toggleBtn.contains(e.target))) return;
+      toggleSidebar();
+    });
+  }
 })();
 
 window.addEventListener('resize', () => {
@@ -508,29 +541,10 @@ function createSettingsPanel() {
 
       <details class="settings-section">
         <summary class="settings-section-title">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:7px"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Identity
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:7px"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Account
         </summary>
-        <div class="settings-desc">Your device identity. Change your handle for easier recall.</div>
-        <div class="settings-fields">
-          <div class="settings-field">
-            <label>Current Handle</label>
-            <input id="user-handle" type="text" readonly />
-          </div>
-          <div class="settings-field">
-            <label>Rename Handle</label>
-            <div style="display:flex;gap:8px">
-              <input id="user-new-handle" type="text" placeholder="my-custom-name" style="flex:1" />
-              <button class="btn-primary" onclick="doRename()">Rename</button>
-            </div>
-          </div>
-          <div class="settings-field">
-            <label>Switch Device</label>
-            <div style="display:flex;gap:8px">
-              <input id="user-device-identity" type="text" placeholder="paste UUID or alias" style="flex:1" />
-              <button class="btn-primary" onclick="doSwitchDevice()">Switch</button>
-            </div>
-          </div>
-        </div>
+        <div class="settings-desc" id="account-desc"></div>
+        <div class="settings-fields" id="account-fields"></div>
       </details>
 
       <button class="btn-primary settings-save-btn" onclick="doSaveSettings()">Save settings</button>
@@ -572,14 +586,9 @@ async function loadSettingsValues() {
     else el.value = localStorage.getItem('curlix:' + id) || '';
   });
 
-  // User info
-  try {
-    const r = await apiFetch(API_BASE + '/api/user/info');
-    if (r.ok) {
-      const d = await r.json();
-      document.getElementById('user-handle').value = d.handle || d.user_id;
-    }
-  } catch {}
+  // Account section (login/register/logout/unlock)
+  renderAccountSection();
+  renderHeaderAuth();
 }
 
 async function doSaveSettings() {
@@ -633,51 +642,197 @@ function refreshAiAssistHints() {
   tabs.forEach(t => refreshAiAssistHint(t.id));
 }
 
-// ── Rename / Switch ─────────────────────────────────────────────────────────
+// ── Account (login / register / logout / unlock env) ───────────────────────
 
-async function doRename() {
-  const input = document.getElementById('user-new-handle');
-  const handle = input.value.trim();
-  if (handle.length < 3) { showToast('Handle must be at least 3 characters', 'error'); return; }
-  if (!/^[a-zA-Z0-9_-]+$/.test(handle)) { showToast('Only letters, numbers, _ and - allowed', 'error'); return; }
+/* ── Burger menu ─────────────────────────────────────────────────────────── */
 
-  const btn = input.nextElementSibling;
-  btn.disabled = true;
-  btn.textContent = '…';
-
-  const result = await renameHandle(handle);
-  if (result.ok) {
-    showToast('Handle renamed to ' + handle, 'success');
-    document.getElementById('user-handle').value = handle;
-    input.value = '';
+function toggleBurger(e) {
+  e.stopPropagation();
+  const menu = document.getElementById('burger-menu');
+  if (menu.classList.contains('hidden')) {
+    menu.classList.remove('hidden');
+    document.addEventListener('click', closeBurger, { once: true });
   } else {
-    showToast(result.error || 'Rename failed', 'error');
+    closeBurger(e);
   }
-
-  btn.disabled = false;
-  btn.textContent = 'Rename';
 }
 
-async function doSwitchDevice() {
-  const input = document.getElementById('user-device-identity');
-  const identity = input.value.trim();
-  if (!identity) { showToast('Enter UUID or alias', 'error'); return; }
+function closeBurger() {
+  document.getElementById('burger-menu').classList.add('hidden');
+}
 
-  const btn = input.nextElementSibling;
-  btn.disabled = true;
-  btn.textContent = '…';
+function renderBurgerAuth() {
+  // No auth items in burger anymore — auth moved to header
+  const divider = document.getElementById('burger-divider');
+  if (divider) divider.classList.add('hidden');
+  const auth = document.getElementById('burger-auth');
+  if (auth) auth.innerHTML = '';
+}
 
-  const result = await switchDevice(identity);
-  if (result.ok) {
-    showToast('Switched to ' + _currentUserId, 'success');
-    // Reload page to pick up new identity
-    setTimeout(() => window.location.reload(), 1000);
-  } else {
-    showToast(result.error || 'Switch failed', 'error');
+/* ── Auth modal ──────────────────────────────────────────────────────────── */
+
+let _authMode = 'login'; // 'login' | 'register'
+
+function openAuthDialog(mode) {
+  _authMode = mode;
+  closeBurger();
+  const title = document.getElementById('auth-title');
+  const submit = document.getElementById('auth-submit');
+  const switchEl = document.getElementById('auth-switch');
+  const hint = document.getElementById('auth-unlock-hint');
+  title.textContent = mode === 'login' ? 'Log in' : 'Register';
+  submit.textContent = mode === 'login' ? 'Log in' : 'Register';
+  if (switchEl) {
+    switchEl.innerHTML = mode === 'login'
+      ? 'No account? <a href="#" onclick="openAuthDialog(\'register\');return false">Register</a>'
+      : 'Already have an account? <a href="#" onclick="openAuthDialog(\'login\');return false">Log in</a>';
+  }
+  hint.classList.add('hidden');
+  document.getElementById('auth-error').classList.add('hidden');
+  document.getElementById('auth-username').value = '';
+  document.getElementById('auth-password').value = '';
+  document.getElementById('auth-dialog').classList.remove('hidden');
+  document.getElementById('auth-username').focus();
+}
+
+function closeAuthDialog() {
+  document.getElementById('auth-dialog').classList.add('hidden');
+}
+
+function setAuthMode(mode) {
+  _authMode = mode;
+  openAuthDialog(mode);
+}
+
+async function doAuthSubmit() {
+  const username = (document.getElementById('auth-username')?.value || '').trim();
+  const password = (document.getElementById('auth-password')?.value || '');
+  const errEl = document.getElementById('auth-error');
+  errEl.classList.add('hidden');
+
+  if (!username || !password) {
+    errEl.textContent = 'Username and password required';
+    errEl.classList.remove('hidden');
+    return;
   }
 
-  btn.disabled = false;
-  btn.textContent = 'Switch';
+  try {
+    const url = API_BASE + (_authMode === 'register' ? '/api/user/register' : '/api/user/login');
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const d = await r.json();
+    if (!r.ok) { errEl.textContent = d.detail || 'Failed'; errEl.classList.remove('hidden'); return; }
+    await setEnvKeyFromPassword(password, d.env_salt);
+    closeAuthDialog();
+    showToast((_authMode === 'register' ? 'Registered' : 'Logged in') + ' as ' + d.username, 'success');
+    setTimeout(() => window.location.reload(), 500);
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.remove('hidden');
+  }
+}
+
+/* ── Header auth state ───────────────────────────────────────────────────── */
+
+function renderHeaderAuth() {
+  const chip = document.getElementById('user-chip');
+  const chipName = document.getElementById('user-chip-name');
+  const logoutBtn = document.getElementById('logout-btn');
+  const loginBtn = document.getElementById('login-btn');
+  if (!chip || !logoutBtn) return;
+
+  if (isLoggedIn()) {
+    chip.classList.remove('hidden');
+    chipName.textContent = _session.username;
+    logoutBtn.classList.remove('hidden');
+    if (loginBtn) loginBtn.classList.add('hidden');
+    // Update admin button visibility
+    const adminBtn = document.getElementById('admin-btn');
+    if (adminBtn) adminBtn.style.display = 'none';
+  } else {
+    chip.classList.add('hidden');
+    logoutBtn.classList.add('hidden');
+    if (loginBtn) loginBtn.classList.remove('hidden');
+  }
+  renderBurgerAuth();
+}
+
+/* ── Enhanced doLogout ───────────────────────────────────────────────────── */
+
+async function doLogout() {
+  try { await fetch(API_BASE + '/api/user/logout', { method: 'POST' }); } catch {}
+  clearEnvKey();
+  _session = null;
+  renderHeaderAuth();
+  showToast('Logged out', 'success');
+}
+
+/* ── importFileClick ──────────────────────────────────────────────────────── */
+
+function importFileClick() {
+  closeBurger();
+  document.getElementById('import-file').click();
+}
+
+/* ── Account section (settings) — unlock only ────────────────────────────── */
+
+function hasSubtleCrypto() { return !!(window.crypto && window.crypto.subtle); }
+
+function renderAccountSection() {
+  const desc = document.getElementById('account-desc');
+  const fields = document.getElementById('account-fields');
+  if (!desc || !fields) return;
+
+  if (!isLoggedIn()) {
+    if (!hasSubtleCrypto()) {
+      desc.innerHTML = 'Accounts need a secure context (HTTPS or localhost) to encrypt environment variables. Data stays in this browser only.';
+      fields.innerHTML = '';
+      return;
+    }
+    desc.innerHTML = 'Log in to sync requests &amp; history to the server (env vars encrypted). Without login, data stays in this browser only.';
+    fields.innerHTML = `
+      <div style="display:flex;gap:8px">
+        <button class="btn-primary" onclick="openAuthDialog('login')">Log in</button>
+        <button class="btn-small" onclick="openAuthDialog('register')">Register</button>
+      </div>`;
+    return;
+  }
+
+  if (envLocked()) {
+    desc.innerHTML = 'Environment variables are locked — enter your password to unlock them.';
+    fields.innerHTML = `
+      <div class="settings-field">
+        <label>Password</label>
+        <div class="pw-wrap">
+          <input id="unlock-password" type="password" placeholder="password" autocomplete="current-password" />
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn-primary" onclick="doUnlockEnv()">Unlock</button>
+        <button class="btn-small" onclick="doLogout()">Log out</button>
+      </div>`;
+  } else {
+    desc.innerHTML = 'Logged in as <b>' + escAttr(_session.username) + '</b>. Requests, history &amp; encrypted env vars sync to the server.';
+    fields.innerHTML = '';
+  }
+  bindEyeToggles(fields);
+}
+
+async function doUnlockEnv() {
+  const unlockEl = document.getElementById('unlock-password');
+  if (!unlockEl) return;
+  const password = unlockEl.value;
+  if (!password) { showToast('Enter your password', 'error'); return; }
+  try {
+    await setEnvKeyFromPassword(password, _session.env_salt);
+    _envList = await fetchEnvVars();
+    renderEnv();
+    renderAccountSection();
+    showToast('Environment unlocked', 'success');
+  } catch (e) { showToast('Unlock failed: ' + e.message, 'error'); }
 }
 
 // ── Multi-tab request system ────────────────────────────────────────────────
@@ -704,7 +859,8 @@ function createTabPanel(id) {
         <option>DELETE</option>
       </select>
       <input id="url-${id}" type="text" placeholder="https://httpbin.org/get" />
-      <button id="send-btn-${id}" class="btn-primary" onclick="sendRequest('${id}')">Send</button>
+      <button id="send-btn-${id}" class="btn-primary" onclick="sendRequest('${id}')">&#10148; Send</button>
+      <button id="save-btn-${id}" class="btn-small" onclick="saveRequest('${id}')" title="Save request">&#128190; Save</button>
     </div>
 
     <div class="req-options">
@@ -1250,9 +1406,8 @@ async function sendRequest(id) {
     document.getElementById('status-badge-' + id).className = 'badge ' + (data.status < 400 ? 'ok' : 'err');
     document.getElementById('response-time-' + id).textContent = elapsed + ' ms';
 
-    // Push to server history
+    // Push to history (server if logged in, else localStorage)
     pushHistoryEntry({
-      user_id: _currentUserId,
       name: urlShort,
       method, url,
       request_headers: rawHeaders,
@@ -1421,8 +1576,6 @@ async function generateRequest(id) {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Generating…';
 
-  aiLog(id, 'Sending request to ' + (apiBase || '(server default)') + ' (model: ' + (model || 'gpt-4o-mini') + ')');
-
   const s = _settings;
   try {
     const t0 = Date.now();
@@ -1477,9 +1630,9 @@ async function generateRequest(id) {
 }
 
 function showAiError(id, msg) {
-  const el = document.getElementById('ai-error-' + id);
-  el.textContent = msg;
-  el.classList.remove('hidden');
+  // const el = document.getElementById('ai-error-' + id);
+  // el.textContent = msg;
+  // el.classList.remove('hidden');
 }
 
 // ── History sidebar ─────────────────────────────────────────────────────────
@@ -1511,7 +1664,11 @@ async function renderHistory() {
 async function clearHistory() {
   showConfirm('Clear history?', 'Delete all history entries? This cannot be undone.', async () => {
     try {
-      await apiFetch(API_BASE + '/api/history', { method: 'DELETE' });
+      if (isLoggedIn()) {
+        await apiFetch(API_BASE + '/api/history', { method: 'DELETE' });
+      } else {
+        localStorage.removeItem('curlix:history');
+      }
       await renderHistory();
       showToast('History cleared', 'success');
     } catch (e) {
@@ -1553,8 +1710,10 @@ async function doDeleteSavedRequest(id, e) {
   });
 }
 
-function saveRequest() {
-  const url = document.getElementById('url-' + activeTabId).value.trim();
+function saveRequest(tabId) {
+  const id = tabId || activeTabId;
+  if (!id) { showToast('No request tab open', 'error'); return; }
+  const url = document.getElementById('url-' + id).value.trim();
   document.getElementById('save-name').value = url || '';
   document.getElementById('save-dialog').classList.remove('hidden');
   setTimeout(() => document.getElementById('save-name').select(), 50);
@@ -1568,7 +1727,7 @@ async function confirmSave() {
   const name = document.getElementById('save-name').value.trim();
   if (!name) return;
 
-  const id = activeTabId;
+  const id = activeTabId || (tabId ? tabId : null);
   const data = {
     name,
     method: document.getElementById('method-' + id).value,
@@ -1748,13 +1907,31 @@ async function checkAdmin() {
 // ── Init ────────────────────────────────────────────────────────────────────
 
 (async function init() {
-  await initUserId();
+  await loadSession();
+  if (isLoggedIn()) await loadEnvKeyIfPresent();
   await loadSettings();
   _envList = await fetchEnvVars();
   renderEnv();
   await renderSidebar();
   await renderHistory();
+  renderHeaderAuth();
   checkAdmin();
   addRequestTab(null); // open a blank request tab on startup
   bindEyeToggles(); // attach eye toggles to all password fields
+
+  // Enter key in auth dialog submits
+  ['auth-username', 'auth-password'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); doAuthSubmit(); }
+    });
+  });
+
+  // Close auth dialog on backdrop click
+  const authDialog = document.getElementById('auth-dialog');
+  if (authDialog) {
+    authDialog.addEventListener('click', e => {
+      if (e.target === authDialog) closeAuthDialog();
+    });
+  }
 })();

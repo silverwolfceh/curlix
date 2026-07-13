@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import Request
+from fastapi import Request, HTTPException
 
 from .db import get_settings, save_settings, ensure_user, ensure_user_sync
 
@@ -73,6 +73,48 @@ def validate_token(token):
     return None
 
 
+# ── User account sessions (stored in settings under "user_sessions") ───────────
+
+def _get_user_sessions():
+    return get_settings().get("user_sessions", {})
+
+
+def _save_user_sessions(sessions):
+    settings = get_settings()
+    settings["user_sessions"] = sessions
+    save_settings(settings)
+
+
+def issue_user_session(user_id, username):
+    token = secrets.token_hex(32)
+    sessions = _get_user_sessions()
+    sessions[token] = {
+        "user_id": user_id,
+        "username": username,
+        "created": _now_iso(),
+        "expires": _now_iso_add_hours(24 * 30),
+    }
+    _save_user_sessions(sessions)
+    return token
+
+
+def validate_user_session(token):
+    sessions = _get_user_sessions()
+    if token in sessions:
+        entry = sessions[token]
+        if is_expired(entry.get("expires", "")):
+            invalidate_user_session(token)
+            return None
+        return entry
+    return None
+
+
+def invalidate_user_session(token):
+    sessions = _get_user_sessions()
+    sessions.pop(token, None)
+    _save_user_sessions(sessions)
+
+
 # ── Time helpers ──────────────────────────────────────────────────────────────
 
 def _now_iso():
@@ -106,17 +148,16 @@ def get_admin_from_request(request: Request) -> Optional[dict]:
 
 
 async def get_user_id(request: Request) -> str:
-    """Resolve user_id for user-scoped routes (cookie or X-User-ID header)."""
-    user_id = request.cookies.get("opm_uid")
-    if not user_id:
-        header = request.headers.get("x-user-id", "")
-        if header:
-            user_id = header
-    if not user_id:
-        user_id = str(uuid.uuid4())
-    resolved = ensure_user_sync(user_id)
-    if resolved:
-        user_id = resolved
-    ensure_user(user_id)
-    request.state.user_id = user_id
-    return user_id
+    """Resolve user_id for user-scoped routes (opm_session cookie or Bearer).
+    Requires a valid user-account session. Raises 401 if not logged in.
+    """
+    token = request.cookies.get("opm_session")
+    if not token:
+        auth = request.headers.get("authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    session = validate_user_session(token) if token else None
+    if not session:
+        raise HTTPException(status_code=401, detail="Login required")
+    request.state.user_id = session["user_id"]
+    return session["user_id"]

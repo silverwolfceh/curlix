@@ -5,25 +5,36 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Curlix - Capture.Rebuild.Replay</title>
   <link rel="icon" type="image/png" href="favicon.png?v=2" />
-  <link rel="stylesheet" href="style.css?v=8" />
+  <link rel="stylesheet" href="style.css?v=20" />
 </head>
 <body>
   <header>
     <span class="logo"><img src="logo.png" alt="Curlix" class="logo-img" />Capture - Rebuild - Replay</span>
     <div class="header-actions">
       <button class="btn-small" id="admin-btn" style="display:none" title="Admin panel">&#128274; Admin</button>
-      <button class="btn-small" onclick="saveRequest()">&#128190; Save</button>
-      <button class="btn-small" onclick="exportAll()">&#8595; Export</button>
-      <label class="btn-small" style="cursor:pointer">&#8593; Import<input type="file" id="import-file" accept=".json" style="display:none" onchange="importFile(this)"/></label>
+
+      <button class="btn-small" id="sidebar-toggle-btn" onclick="toggleSidebar()" title="Toggle sidebar">☰</button>
       <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark theme">🌙</button>
-      <button class="btn-small" onclick="openSettingsTab()" title="Settings">&#9881; Settings</button>
+      <button class="btn-small hidden" id="login-btn" onclick="openAuthDialog('login')" title="Log in">&#128275; Log in</button>
+      <div id="user-chip" class="user-chip hidden" title="Logged in">
+        <span class="user-chip-icon">&#128100;</span><span id="user-chip-name"></span>
+      </div>
+      <button class="btn-small hidden" id="logout-btn" onclick="doLogout()" title="Log out">Log out</button>
+      <div class="burger-wrap">
+        <button class="burger-btn" id="burger-btn" onclick="toggleBurger(event)" title="Menu">&#9776;</button>
+        <div class="burger-menu hidden" id="burger-menu">
+          <button class="burger-item" onclick="importFileClick()">&#8593; Import</button>
+          <button class="burger-item" onclick="exportAll()">&#8595; Export</button>
+          <button class="burger-item" onclick="openSettingsTab()">&#9881; Settings</button>
+        </div>
+      </div>
     </div>
   </header>
+  <input type="file" id="import-file" accept=".json" style="display:none" onchange="importFile(this)"/>
 
   <div class="layout">
     <!-- SIDEBAR -->
     <aside id="sidebar">
-      <button id="sidebar-toggle" onclick="toggleSidebar()" title="Hide sidebar">◀</button>
       <div class="sidebar-tabs">
         <button class="sidebar-tab active" data-stab="requests">Requests</button>
         <button class="sidebar-tab" data-stab="history">History</button>
@@ -57,11 +68,6 @@
       <div id="req-panels"></div>
     </main>
   </div>
-
-  <!-- Show-sidebar button (visible when sidebar hidden) -->
-  <button id="sidebar-show" onclick="toggleSidebar()" title="Show sidebar" class="hidden">▶</button>
-  <!-- Mobile backdrop -->
-  <div id="sidebar-backdrop" class="sidebar-backdrop hidden" onclick="toggleSidebar()"></div>
 
   <!-- Missing vars dialog -->
   <div id="vars-dialog" class="dialog-backdrop hidden">
@@ -102,6 +108,24 @@
     </div>
   </div>
 
+  <!-- Auth dialog (login / register) -->
+  <div id="auth-dialog" class="dialog-backdrop hidden">
+    <div class="dialog dialog-auth">
+      <button class="dialog-close" onclick="closeAuthDialog()">&times;</button>
+      <div id="auth-title" class="dialog-title">Log in</div>
+      <div id="auth-error" class="error hidden"></div>
+      <input id="auth-username" type="text" placeholder="username" autocomplete="username" style="width:100%;margin-bottom:8px" />
+      <div class="pw-wrap">
+        <input id="auth-password" type="password" placeholder="password" autocomplete="current-password" style="width:100%" />
+      </div>
+      <div id="auth-unlock-hint" class="dialog-subtitle hidden"></div>
+      <div class="dialog-actions">
+        <button class="btn-primary" id="auth-submit" onclick="doAuthSubmit()">Log in</button>
+      </div>
+      <div class="auth-switch" id="auth-switch"></div>
+    </div>
+  </div>
+
   <!-- Confirm dialog (reusable) -->
   <div id="confirm-dialog" class="dialog-backdrop hidden">
     <div class="dialog">
@@ -115,7 +139,7 @@
   </div>
 
   <script src="command-parser.js?v=4"></script>
-  <script src="app.js?v=28"></script>
+  <script src="app.js?v=45"></script>
   <script>
     document.getElementById('confirm-cancel').addEventListener('click', () => closeConfirm(false));
     document.getElementById('confirm-ok').addEventListener('click', () => closeConfirm(true));

@@ -92,7 +92,7 @@ def _ai_fill_call(req: AIFillRequest) -> str:
     logger.info("POST %s model=%s call_ai=%s", url, req.model, call_ai)
 
     session = requests.Session()
-    session.trust_env = False
+    #session.trust_env = False
     if proxies:
         session.proxies.update(proxies)
 

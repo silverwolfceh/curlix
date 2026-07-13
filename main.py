@@ -1,59 +1,17 @@
 """Curlix entrypoint: assembles the app, mounts routers, serves static files."""
-import uuid
 
-from fastapi import Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import create_app
-from app.db import ensure_user, ensure_user_sync
 
 app = create_app()
-
-
-# ── User resolution middleware ────────────────────────────────────────────────
-
-@app.middleware("http")
-async def resolve_user(request: Request, call_next):
-    """Resolve user_id from cookie or header. Auto-create user. Set cookie.
-    Skipped for /admin and /api/ — those resolve user inside their handlers.
-    """
-    if request.url.path == "/admin" or request.url.path.startswith("/api/"):
-        return await call_next(request)
-
-    user_id = request.cookies.get("opm_uid")
-    if not user_id:
-        header = request.headers.get("x-user-id", "")
-        if header:
-            user_id = header
-    if not user_id:
-        user_id = str(uuid.uuid4())
-
-    resolved = ensure_user_sync(user_id)
-    if resolved:
-        user_id = resolved
-    ensure_user(user_id)
-
-    request.state.user_id = user_id
-
-    response = await call_next(request)
-    existing_cookie = response.headers.get("set-cookie", "")
-    if "opm_uid=" not in existing_cookie:
-        response.set_cookie(
-            key="opm_uid",
-            value=user_id,
-            path="/",
-            httponly=True,
-            samesite="lax",
-            max_age=365 * 24 * 3600,
-        )
-    request.state.user_id = user_id
-    return response
 
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 
 from app.auth_routes import router as auth_router
+from app.user_auth_routes import router as user_auth_router
 from app.proxy import router as proxy_router
 from app.llm import router as llm_router
 from app.settings import router as settings_router
@@ -65,6 +23,7 @@ from app.users import router as users_router
 
 for r in (
     auth_router,
+    user_auth_router,
     proxy_router,
     llm_router,
     settings_router,
@@ -79,14 +38,26 @@ for r in (
 
 # ── Admin page + static files ─────────────────────────────────────────────────
 
+_NO_CACHE = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
 @app.get("/admin")
 async def admin_redirect():
     html = open("static/admin.html", encoding="utf-8").read()
-    return HTMLResponse(html, headers={
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache",
-        "Expires": "0",
-    })
+    return HTMLResponse(html, headers=_NO_CACHE)
+
+
+# Explicit `/` route with no-cache so the browser always revalidates index.html
+# and picks up the latest `app.js?v=N` bump. Without this, a stale cached
+# index.html keeps loading an old JS version (broke anon mode after the
+# account refactor: old app.js redirected to /admin on any 401).
+@app.get("/")
+async def index():
+    html = open("static/index.html", encoding="utf-8").read()
+    return HTMLResponse(html, headers=_NO_CACHE)
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

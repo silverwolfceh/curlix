@@ -1,77 +1,19 @@
-"""Users router: user identity (info/rename/switch-device), admin user management,
-and localStorage migration (/api/import-localstorage).
+"""Users router: admin user management and localStorage migration
+(/api/import-localstorage — account session required; settings write admin-only).
 """
 import json
 import hashlib
 
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import JSONResponse
 
 from .db import (
     get_settings, save_settings, get_all_users, update_user_role,
-    delete_user, create_user, ensure_user, rename_user, ensure_user_sync,
-    create_request, save_env_vars, get_db,
+    delete_user, create_user, create_request, save_env_vars,
 )
 from .auth import get_user_id, get_admin_from_request, hash_password
-from .models import RenameRequest, SwitchDeviceRequest, UserCreateRequest, UserUpdateRequest
+from .models import UserCreateRequest, UserUpdateRequest
 
 router = APIRouter()
-
-
-# ── User identity (non-admin) ────────────────────────────────────────────────
-
-@router.post("/api/user/rename")
-async def user_rename(request: Request, body: RenameRequest):
-    """User renames their identity handle."""
-    handle = body.handle.strip()
-    if len(handle) < 3:
-        raise HTTPException(400, "Handle must be at least 3 characters")
-    if not handle.replace("_", "").replace("-", "").isalnum():
-        raise HTTPException(400, "Handle can only contain letters, numbers, underscores, hyphens")
-
-    await get_user_id(request)
-    user_id = request.state.user_id
-    try:
-        rename_user(user_id, handle)
-        return {"ok": True, "handle": handle}
-    except Exception as e:
-        if "UNIQUE constraint" in str(e):
-            raise HTTPException(409, "Handle already taken")
-        raise HTTPException(500, str(e))
-
-
-@router.post("/api/switch-device")
-async def switch_device(request: Request, body: SwitchDeviceRequest):
-    """Switch to a different device by UUID or alias."""
-    identity = body.identity.strip()
-    resolved = ensure_user_sync(identity)
-    if not resolved:
-        raise HTTPException(404, "Identity not found. Creating new user instead.")
-    ensure_user(resolved)
-
-    resp = JSONResponse({"ok": True, "user_id": resolved})
-    resp.set_cookie(
-        key="opm_uid",
-        value=resolved,
-        path="/",
-        httponly=True,
-        samesite="lax",
-        max_age=365 * 24 * 3600,
-    )
-    return resp
-
-
-@router.get("/api/user/info")
-async def user_info(request: Request):
-    """Get current user info (id + alias)."""
-    await get_user_id(request)
-    user_id = request.state.user_id
-    conn = get_db()
-    alias = conn.execute(
-        "SELECT handle FROM user_aliases WHERE user_id = ?", (user_id,)
-    ).fetchone()
-    conn.close()
-    return {"user_id": user_id, "handle": alias["handle"] if alias else user_id}
 
 
 # ── Admin user management ────────────────────────────────────────────────────
@@ -140,12 +82,12 @@ async def import_localstorage(request: Request, data: dict):
     """Import data from browser localStorage dump."""
     await get_user_id(request)
     user_id = request.state.user_id
-    ensure_user(user_id)
 
     import_data = data.get("data", {})
+    is_admin = bool(get_admin_from_request(request))
 
-    # Migrate settings
-    if "curlix:ai-base" in import_data:
+    # Migrate settings (admin-only — these are global settings)
+    if is_admin and "curlix:ai-base" in import_data:
         settings = get_settings()
         ai_settings = {}
         for prefix in ("ai-base", "ai-key", "ai-model", "ai-call", "ai-style"):
@@ -157,14 +99,15 @@ async def import_localstorage(request: Request, data: dict):
             settings["ai"] = ai_settings
             save_settings(settings)
 
-    # Migrate proxy settings
+    # Migrate proxy settings (admin-only — global settings)
     proxy_settings = {}
-    for key_suffix in ("proxy-url", "proxy-user", "proxy-pass"):
-        val = import_data.get(f"curlix:{key_suffix}")
-        if val:
-            key = key_suffix.replace("-", "_")
-            proxy_settings[key] = val
-    if proxy_settings:
+    if is_admin:
+        for key_suffix in ("proxy-url", "proxy-user", "proxy-pass"):
+            val = import_data.get(f"curlix:{key_suffix}")
+            if val:
+                key = key_suffix.replace("-", "_")
+                proxy_settings[key] = val
+    if proxy_settings and is_admin:
         settings = get_settings()
         settings["proxy"] = proxy_settings
         save_settings(settings)

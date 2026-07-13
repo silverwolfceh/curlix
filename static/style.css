@@ -111,56 +111,6 @@ header {
   margin-left: -33vw;
 }
 
-#sidebar-toggle {
-  position: absolute;
-  top: 50%;
-  right: -12px;
-  transform: translateY(-50%);
-  z-index: 20;
-  width: 24px;
-  height: 48px;
-  border: 1px solid var(--border);
-  border-left: none;
-  border-radius: 0 6px 6px 0;
-  background: var(--surface);
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-#sidebar-toggle:hover { color: var(--accent); border-color: var(--accent); }
-
-#sidebar-show {
-  position: fixed;
-  top: 60px;
-  left: 0;
-  z-index: 20;
-  width: 24px;
-  height: 48px;
-  border: 1px solid var(--border);
-  border-left: none;
-  border-radius: 0 6px 6px 0;
-  background: var(--surface);
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-#sidebar-show:hover { color: var(--accent); border-color: var(--accent); }
-
-.sidebar-backdrop {
-  position: fixed;
-  inset: 45px 0 0 0;
-  background: rgba(0,0,0,0.4);
-  z-index: 15;
-}
-
 .sidebar-tabs {
   display: flex;
   border-bottom: 1px solid var(--border);
@@ -972,6 +922,26 @@ textarea {
   gap: 8px;
 }
 
+/* ── Auth dialog close button ──────────────────────────────────────────────── */
+.dialog-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim, #888);
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px;
+}
+.dialog-close:hover {
+  color: var(--text);
+}
+.dialog-auth {
+  position: relative;
+}
+
 .history-empty {
   padding: 12px 14px;
   font-size: 12px;
@@ -1061,6 +1031,100 @@ textarea {
 #admin-btn:hover {
   background: linear-gradient(135deg, #7c8df0, #8958b8);
 }
+
+/* ── User chip (logged-in indicator) ───────────────────────────────────────── */
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  background: rgba(102, 126, 234, 0.12);
+  border: 1px solid rgba(102, 126, 234, 0.35);
+  border-radius: 14px;
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 600;
+  max-width: 160px;
+}
+.user-chip-icon { font-size: 14px; }
+#user-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Burger menu ──────────────────────────────────────────────────────────── */
+.burger-wrap { position: relative; }
+.burger-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+}
+.burger-btn:hover { background: var(--surface-2, #2e3138); border-color: var(--accent); }
+.burger-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  padding: 6px;
+  z-index: 200;
+}
+.burger-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.burger-item:hover { background: var(--surface-2, #2e3138); color: var(--accent); }
+
+.burger-icon-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 12px 8px;
+  line-height: 1.2;
+}
+.burger-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.burger-divider { height: 1px; background: var(--border); margin: 6px 4px; }
+.burger-auth-label {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ── Auth dialog switch link ───────────────────────────────────────────────── */
+.auth-switch {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted, #888);
+}
+.auth-switch a { color: var(--accent); text-decoration: none; }
+.auth-switch a:hover { text-decoration: underline; }
+#auth-error { margin-bottom: 8px; }
 
 /* ── Settings identity section ─────────────────────────────────────────────── */
 .settings-section .settings-field:last-child {

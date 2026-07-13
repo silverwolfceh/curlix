@@ -38,6 +38,16 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class UserRegisterRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UserLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 class RenameRequest(BaseModel):
     handle: str
 

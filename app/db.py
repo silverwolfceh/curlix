@@ -3,6 +3,8 @@
 import sqlite3
 import os
 import json
+import hashlib
+import base64
 from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "curlix.db")
@@ -24,6 +26,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
             role TEXT DEFAULT 'user',
+            username TEXT UNIQUE,
+            password_hash TEXT,
+            env_salt TEXT,
             created_at TEXT DEFAULT (datetime('now'))
         );
 
@@ -72,6 +77,7 @@ def init_db():
             user_id TEXT NOT NULL,
             key TEXT,
             value TEXT,
+            iv TEXT,
             FOREIGN KEY (user_id) REFERENCES users(id)
         );
 
@@ -97,6 +103,14 @@ def init_db():
         conn.execute("ALTER TABLE saved_requests ADD COLUMN ai_desc TEXT")
     if not _has_col("history", "request_cookies"):
         conn.execute("ALTER TABLE history ADD COLUMN request_cookies TEXT")
+    if not _has_col("users", "username"):
+        conn.execute("ALTER TABLE users ADD COLUMN username TEXT")
+    if not _has_col("users", "password_hash"):
+        conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+    if not _has_col("users", "env_salt"):
+        conn.execute("ALTER TABLE users ADD COLUMN env_salt TEXT")
+    if not _has_col("env_vars", "iv"):
+        conn.execute("ALTER TABLE env_vars ADD COLUMN iv TEXT")
     conn.commit()
     conn.close()
 
@@ -336,7 +350,7 @@ def add_history(user_id, name, method, url, request_headers, request_body,
 def list_env_vars(user_id):
     conn = get_db()
     rows = conn.execute(
-        "SELECT id, key, value FROM env_vars WHERE user_id = ? ORDER BY key",
+        "SELECT id, key, value, iv FROM env_vars WHERE user_id = ? ORDER BY key",
         (user_id,),
     ).fetchall()
     conn.close()
@@ -344,8 +358,9 @@ def list_env_vars(user_id):
 
 
 def save_env_vars(user_id, vars_list):
-    """vars_list is [{key, value}, ...]. Replaces all for user.
-    Tolerates {k, v} aliases. Wrapped so a bad row never leaves a lock.
+    """vars_list is [{key, value, iv}, ...]. Replaces all for user.
+    Tolerates {k, v} aliases. iv is optional (encrypted-value nonce).
+    Wrapped so a bad row never leaves a lock.
     """
     conn = get_db()
     try:
@@ -353,11 +368,12 @@ def save_env_vars(user_id, vars_list):
         for v in vars_list:
             key = v.get("key", v.get("k"))
             value = v.get("value", v.get("v"))
+            iv = v.get("iv")
             if not key:
                 continue
             conn.execute(
-                "INSERT INTO env_vars (user_id, key, value) VALUES (?, ?, ?)",
-                (user_id, key, value),
+                "INSERT INTO env_vars (user_id, key, value, iv) VALUES (?, ?, ?, ?)",
+                (user_id, key, value, iv),
             )
         conn.commit()
     except Exception:
@@ -417,3 +433,39 @@ def delete_collection(user_id, c_id):
     conn.execute("DELETE FROM collections WHERE id=? AND user_id=?", (c_id, user_id))
     conn.commit()
     conn.close()
+
+
+# ── User accounts ────────────────────────────────────────────────────────────
+
+def create_account(username, password_hash, env_salt):
+    """Create a user account (with alias = username). Returns user_id."""
+    user_id = hashlib.sha256(username.encode()).hexdigest()[:16]
+    conn = get_db()
+    conn.execute(
+        "INSERT OR IGNORE INTO users (id, role, username, password_hash, env_salt) VALUES (?, 'user', ?, ?, ?)",
+        (user_id, username, password_hash, env_salt),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO user_aliases (user_id, handle) VALUES (?, ?)",
+        (user_id, username),
+    )
+    conn.commit()
+    conn.close()
+    return user_id
+
+
+def get_account_by_username(username):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id, username, password_hash, env_salt, role FROM users WHERE username = ?",
+        (username,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_user_env_salt(user_id):
+    conn = get_db()
+    row = conn.execute("SELECT env_salt FROM users WHERE id = ?", (user_id,)).fetchone()
+    conn.close()
+    return row["env_salt"] if row else None
