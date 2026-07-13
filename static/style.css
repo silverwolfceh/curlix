@@ -1121,3 +1121,30 @@ textarea {
   #sidebar { width: 180px; }
   #sidebar.sidebar-hidden { transform: translateX(-100%); }
 }
+
+/* File upload row (multipart/form-data) */
+.file-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 6px 0 10px 0;
+  font-size: 12px;
+}
+.file-pick-btn { cursor: pointer; }
+.file-name {
+  color: var(--text-muted, #888);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-field-input {
+  width: 90px;
+  padding: 2px 6px;
+  font-size: 12px;
+  border: 1px solid var(--border, #444);
+  background: var(--input-bg, #1e1e1e);
+  color: var(--text, #eee);
+  border-radius: 4px;
+}

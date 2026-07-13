@@ -9,6 +9,7 @@ class ProxyRequest(BaseModel):
     headers: dict = {}
     cookies: dict = {}
     body: str = ""
+    body_b64: Optional[str] = None  # base64-encoded raw bytes (file uploads / binary)
     use_proxy: bool = False
     proxy_url: Optional[str] = None
     proxy_user: Optional[str] = None

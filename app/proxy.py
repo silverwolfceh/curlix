@@ -5,6 +5,7 @@ corporate compatibility. Honors env proxies (HTTP_PROXY/HTTPS_PROXY) unless an
 explicit proxy is requested — matches the generated.py script behavior.
 """
 import asyncio
+import base64
 import logging
 from urllib.parse import urlparse, urlunparse
 from typing import Optional
@@ -47,13 +48,23 @@ async def proxy(req: ProxyRequest):
         session.proxies = {"http": purl, "https": purl}
 
     try:
+        if req.body_b64:
+            try:
+                data = base64.b64decode(req.body_b64)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail="Invalid body_b64: " + str(e))
+        elif req.body:
+            data = req.body.encode()
+        else:
+            data = None
+
         resp = await asyncio.to_thread(
             session.request,
             method=req.method.upper(),
             url=req.url,
             headers=req.headers or {},
             cookies=req.cookies or {},
-            data=req.body.encode() if req.body else None,
+            data=data,
             allow_redirects=True,
             timeout=30,
         )

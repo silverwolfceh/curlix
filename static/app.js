@@ -740,6 +740,12 @@ function createTabPanel(id) {
 
     <div class="section-label" id="body-label-${id}">Body</div>
     <textarea id="body-${id}" placeholder='{"key": "value"}'></textarea>
+    <div class="file-upload-row" id="file-upload-row-${id}">
+      <label class="btn-small file-pick-btn">📁 Choose file<input type="file" id="file-input-${id}" style="display:none" onchange="onFilePicked('${id}', this)"></label>
+      <span class="file-name" id="file-name-${id}">no file</span>
+      <input type="text" id="file-field-${id}" class="file-field-input" value="file" title="Form field name" />
+      <button class="btn-small" id="file-clear-${id}" onclick="clearFile('${id}')" title="Remove file">✕</button>
+    </div>
     <div class="section-label">
       <button class="btn-small" onclick="generatePython('${id}')" title="Generate python requests script">🐍 Try with requests</button>
     </div>
@@ -965,6 +971,90 @@ function pyRepr(s) {
   return "'" + String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\n/g, "\\n") + "'";
 }
 
+// ── File upload (multipart/form-data) ───────────────────────────────────────
+// Per-tab attached file. When set, sendRequest builds a multipart body and
+// sends raw bytes (base64) — overrides the text body textarea.
+const _tabFiles = {}; // id -> File (or null)
+
+function onFilePicked(id, input) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  _tabFiles[id] = f;
+  const nameEl = document.getElementById('file-name-' + id);
+  if (nameEl) nameEl.textContent = f.name + ' (' + formatBytes(f.size) + ')';
+}
+
+function clearFile(id) {
+  _tabFiles[id] = null;
+  const input = document.getElementById('file-input-' + id);
+  if (input) input.value = '';
+  const nameEl = document.getElementById('file-name-' + id);
+  if (nameEl) nameEl.textContent = 'no file';
+}
+
+function formatBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+
+function bytesToB64(bytes) {
+  let bin = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(bin);
+}
+
+// Build a multipart/form-data body from an attached file (+ optional text fields
+// parsed from the body textarea as key=value lines). Returns {boundary, b64}.
+async function buildMultipartBody(id) {
+  const file = _tabFiles[id];
+  if (!file) return null;
+  const field = (document.getElementById('file-field-' + id) || {}).value || 'file';
+  const boundary = '----CurlixBoundary' + Math.random().toString(16).slice(2);
+  const enc = new TextEncoder();
+  const CRLF = '\r\n';
+  const parts = [];
+
+  // Extra text fields: each non-empty line in body textarea as key=value.
+  const bodyText = (document.getElementById('body-' + id) || {}).value || '';
+  bodyText.split(/\r?\n/).forEach(line => {
+    const eq = line.indexOf('=');
+    if (eq === -1) return;
+    const k = line.slice(0, eq).trim();
+    const v = line.slice(eq + 1);
+    if (!k) return;
+    parts.push(enc.encode('--' + boundary + CRLF +
+      'Content-Disposition: form-data; name="' + k + '"' + CRLF + CRLF +
+      v + CRLF));
+  });
+
+  // File part.
+  const ct = file.type || 'application/octet-stream';
+  const header = '--' + boundary + CRLF +
+    'Content-Disposition: form-data; name="' + field + '"; filename="' + file.name + '"' + CRLF +
+    'Content-Type: ' + ct + CRLF + CRLF;
+  parts.push(enc.encode(header));
+  parts.push(new Uint8Array(await file.arrayBuffer()));
+  parts.push(enc.encode(CRLF));
+  parts.push(enc.encode('--' + boundary + '--' + CRLF));
+
+  let len = 0;
+  for (const p of parts) len += p.length;
+  const out = new Uint8Array(len);
+  let off = 0;
+  for (const p of parts) { out.set(p, off); off += p.length; }
+  return { boundary, b64: bytesToB64(out) };
+}
+
+// Case-insensitive header key lookup.
+function findHeaderKey(headers, name) {
+  const lower = name.toLowerCase();
+  return Object.keys(headers).find(k => k.toLowerCase() === lower);
+}
+
 function generatePython(id) {
   const method = (document.getElementById('method-' + id).value || 'GET').toUpperCase();
   const rawUrl = document.getElementById('url-' + id).value.trim();
@@ -980,6 +1070,7 @@ function generatePython(id) {
     Object.entries(rawCookies).map(([k, v]) => [resolveVars(k), resolveVars(v)])
   );
   const body = document.getElementById('body-' + id).value;
+  const attachedFile = _tabFiles[id];
 
   const useProxy = document.getElementById('opt-proxy-' + id).checked;
   const s = _settings;
@@ -1013,7 +1104,13 @@ function generatePython(id) {
     lines.push('cookies = {}');
   }
 
-  if (body.trim()) {
+  if (attachedFile) {
+    // Strip Content-Type — requests sets the multipart boundary itself.
+    const ctKey = findHeaderKey(headers, 'Content-Type');
+    if (ctKey) delete headers[ctKey];
+    const fieldName = (document.getElementById('file-field-' + id) || {}).value || 'file';
+    lines.push('files = {' + pyRepr(fieldName) + ': (' + pyRepr(attachedFile.name) + ', open(' + pyRepr(attachedFile.name) + ', \'rb\'), ' + pyRepr(attachedFile.type || 'application/octet-stream') + ')}');
+  } else if (body.trim()) {
     lines.push('body = ' + pyRepr(body));
   } else {
     lines.push('body = None');
@@ -1039,7 +1136,11 @@ function generatePython(id) {
   lines.push('    url=url,');
   lines.push('    headers=headers,');
   lines.push('    cookies=cookies,');
-  lines.push('    data=body.encode() if body else None,');
+  if (attachedFile) {
+    lines.push('    files=files,');
+  } else {
+    lines.push('    data=body.encode() if body else None,');
+  }
   lines.push('    proxies=proxies,');
   lines.push('    verify=False,');
   lines.push('    timeout=30,');
@@ -1095,8 +1196,30 @@ async function sendRequest(id) {
 
   // Read proxy/auth from settings
   const s = _settings;
+
+  // If a file is attached, build multipart/form-data body (raw bytes).
+  let bodyB64 = null;
+  const attachedFile = _tabFiles[id];
+  if (attachedFile) {
+    try {
+      const mp = await buildMultipartBody(id);
+      if (mp) {
+        bodyB64 = mp.b64;
+        // Force Content-Type with our boundary (replace any existing).
+        const existing = findHeaderKey(headers, 'Content-Type');
+        if (existing) delete headers[existing];
+        headers['Content-Type'] = 'multipart/form-data; boundary=' + mp.boundary;
+      }
+    } catch (e) {
+      document.getElementById('response-body-' + id).textContent = 'File read error: ' + e.message;
+      panel.classList.remove('hidden');
+      btn.disabled = false; btn.textContent = 'Send';
+      return;
+    }
+  }
+
   const payload = {
-    url, method, headers, body: bodyText, cookies,
+    url, method, headers, body: bodyB64 ? '' : bodyText, body_b64: bodyB64, cookies,
     use_proxy: useProxy,
     proxy_url: s.proxy_url || '',
     proxy_user: s.proxy_user || '',
@@ -1578,6 +1701,7 @@ async function closeImportDialog(action) {
 // ── Apply request (used by history click) ────────────────────────────────────
 
 function applyRequestToTab(id, req) {
+  clearFile(id);
   document.getElementById('method-' + id).value = req.method || 'GET';
   updateBodyVisibility(id);
   document.getElementById('url-' + id).value = req.url || '';
