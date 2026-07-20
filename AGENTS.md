@@ -63,7 +63,7 @@ app/                 # backend package
 ## Frontend rules
 
 - **No build step.** Vanilla JS in `static/app.js` (~1300 lines, single file), HTML in `static/index.html` + `static/admin.html`, CSS in `static/style.css`.
-- **Cache-bust after JS changes:** bump `app.js?v=N` in `static/index.html`. Current: `v=16`.
+- **Cache-bust after JS changes:** bump `app.js?v=N` in `static/index.html`. Current: `v=30`.
 - **Admin page (`/admin`) sends no-cache headers** (route in `main.py`) so `admin.html` updates apply immediately. Do not add cache headers elsewhere.
 - **All state lives server-side now** (per-user, in SQLite) — saved requests, history, env vars, settings. Theme + sidebar-hidden + AI config (local override) stay in `localStorage` with `curlix:` prefix.
 

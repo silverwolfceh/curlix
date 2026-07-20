@@ -42,6 +42,7 @@
       </div>
 
       <div id="stab-requests" class="sidebar-panel active">
+        <button class="btn-small env-add-btn" onclick="clearAllRequests()">Clear all</button>
         <div id="saved-list"></div>
       </div>
 
@@ -139,7 +140,7 @@
   </div>
 
   <script src="command-parser.js?v=4"></script>
-  <script src="app.js?v=45"></script>
+  <script src="app.js?v=55"></script>
   <script>
     document.getElementById('confirm-cancel').addEventListener('click', () => closeConfirm(false));
     document.getElementById('confirm-ok').addEventListener('click', () => closeConfirm(true));

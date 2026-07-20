@@ -50,6 +50,7 @@ function bindEyeToggles(root = document) {
 
 let _session = null;      // {user_id, username, env_salt} | null
 let _envKey = null;       // CryptoKey | null (only when logged in & unlocked)
+let _syncedThisSession = false; // prevent duplicate syncs on re-login
 
 async function loadSession() {
   try {
@@ -86,18 +87,25 @@ async function deriveEnvBits(password, saltB64) {
 async function setEnvKeyFromPassword(password, saltB64) {
   const bits = await deriveEnvBits(password, saltB64);
   sessionStorage.setItem('curlix:env-key', bufToB64(bits));
+  localStorage.setItem('curlix:env-key', bufToB64(bits));
   _envKey = await crypto.subtle.importKey('raw', bits, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
 }
 
 async function loadEnvKeyIfPresent() {
-  const b64 = sessionStorage.getItem('curlix:env-key');
-  if (!b64) { _envKey = null; return; }
+  // Try sessionStorage first, fall back to localStorage (survives refresh)
+  let b64 = sessionStorage.getItem('curlix:env-key') || localStorage.getItem('curlix:env-key');
+  if (!b64) { console.warn('[env] no key found'); _envKey = null; return; }
   try {
     _envKey = await crypto.subtle.importKey('raw', b64ToBuf(b64), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-  } catch (e) { _envKey = null; }
+    console.log('[env] key loaded');
+  } catch (e) { console.error('[env] key import failed:', e); _envKey = null; }
 }
 
-function clearEnvKey() { sessionStorage.removeItem('curlix:env-key'); _envKey = null; }
+function clearEnvKey() {
+  sessionStorage.removeItem('curlix:env-key');
+  localStorage.removeItem('curlix:env-key');
+  _envKey = null;
+}
 
 async function encryptStr(key, str) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -126,26 +134,28 @@ async function apiFetch(url, opts = {}) {
 
 async function fetchEnvVars() {
   if (isLoggedIn()) {
-    if (!_envKey) return []; // locked — nothing to show until unlocked
+    console.log('[env] fetching, _envKey=', !!_envKey);
+    if (!_envKey) return [];
     try {
       const r = await apiFetch(API_BASE + '/api/env-vars');
-      if (!r.ok) return [];
+      if (!r.ok) { console.warn('[env] fetch failed:', r.status); return []; }
       const data = await r.json();
+      console.log('[env] got', data.length, 'server entries');
       const out = [];
       for (const e of data) {
-        try { out.push({ k: e.key, v: e.iv ? await decryptStr(_envKey, e.iv, e.value) : e.value }); }
-        catch (err) { out.push({ k: e.key, v: '' }); }
+        try { out.push({ k: e.key, v: e.iv ? await decryptStr(_envKey, e.iv, e.value) : e.value }); } catch (err) { console.error('[env] decrypt failed for', e.key, err); out.push({ k: e.key, v: '[decrypt error]' }); }
       }
       return out;
-    } catch { return []; }
+    } catch (e) { console.error('[env] fetch failed:', e); return []; }
   }
   // Anonymous: localStorage (plaintext, browser-only)
   try { return JSON.parse(localStorage.getItem('curlix:env') || '[]'); } catch { return []; }
 }
 
 async function persistEnvVars(env) {
+  console.log('[env] persist called with', env.length, 'vars, isLoggedIn=', isLoggedIn(), '_envKey=', !!_envKey);
   if (isLoggedIn()) {
-    if (!_envKey) return;
+    if (!_envKey) { console.error('[env] cannot persist: env key not available'); return; }
     try {
       const enc = [];
       for (const e of env) {
@@ -153,10 +163,12 @@ async function persistEnvVars(env) {
         const { iv, value } = await encryptStr(_envKey, e.v || '');
         enc.push({ key: e.k, value, iv });
       }
+      console.log('[env] encrypting', enc.length, 'vars');
       await apiFetch(API_BASE + '/api/env-vars', {
         method: 'PUT',
         body: JSON.stringify({ vars: enc }),
       });
+      console.log('[env] synced', enc.length, 'vars to server');
     } catch (e) { console.error('[env] save failed:', e); }
     return;
   }
@@ -345,6 +357,64 @@ async function pushHistoryEntry(entry) {
     localStorage.setItem('curlix:history', JSON.stringify(list.slice(0, 200)));
     renderHistory();
   } catch (e) { console.error('[history] push failed:', e); }
+}
+
+// ── Local → Server sync (on login/register) ─────────────────────────────────
+
+async function syncLocalToServer() {
+  const saved = (() => { try { return JSON.parse(localStorage.getItem('curlix:saved') || '[]'); } catch { return []; } })();
+  const history = (() => { try { return JSON.parse(localStorage.getItem('curlix:history') || '[]'); } catch { return []; } })();
+  const env = (() => { try { return JSON.parse(localStorage.getItem('curlix:env') || '[]'); } catch { return []; } })();
+  console.log('[sync] env from localStorage:', env.length, 'saved:', saved.length, 'history:', history.length);
+
+  // Save each local saved request
+  for (const item of saved) {
+    try {
+      await apiFetch(API_BASE + '/api/saved-requests', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: item.name || item.url || 'Untitled',
+          method: item.method || 'GET',
+          url: item.url || '',
+          headers: item.headers || {},
+          cookies: item.cookies || {},
+          body: item.body || '',
+          ai_desc: item.ai_desc || '',
+        }),
+      });
+    } catch { /* skip individual failures */ }
+  }
+
+  // Save each local history entry
+  for (const item of history) {
+    try {
+      await apiFetch(API_BASE + '/api/history', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: item.url || 'Untitled',
+          method: item.method || 'GET',
+          url: item.url || '',
+          request_headers: item.headers || {},
+          request_body: item.body || '',
+          response_status: item.response_status || null,
+          response_headers: item.response_headers || {},
+          response_body: item.response_body || '',
+          request_cookies: item.cookies || {},
+        }),
+      });
+    } catch { /* skip individual failures */ }
+  }
+
+  // Persist env vars
+  if (env.length) {
+    await persistEnvVars(env);
+  }
+
+  // Clear localStorage — data is now on server
+  localStorage.removeItem('curlix:saved');
+  localStorage.removeItem('curlix:history');
+  localStorage.removeItem('curlix:env');
+  console.log('[sync] cleared localStorage items');
 }
 
 // ── Theme ───────────────────────────────────────────────────────────────────
@@ -728,7 +798,13 @@ async function doAuthSubmit() {
     await setEnvKeyFromPassword(password, d.env_salt);
     closeAuthDialog();
     showToast((_authMode === 'register' ? 'Registered' : 'Logged in') + ' as ' + d.username, 'success');
-    setTimeout(() => window.location.reload(), 500);
+    // Sync local data to server
+    if (!_syncedThisSession) {
+      await syncLocalToServer();
+      _syncedThisSession = true;
+    }
+    // Reload for clean state
+    setTimeout(() => window.location.reload(), 300);
   } catch (e) {
     errEl.textContent = e.message;
     errEl.classList.remove('hidden');
@@ -766,6 +842,7 @@ async function doLogout() {
   try { await fetch(API_BASE + '/api/user/logout', { method: 'POST' }); } catch {}
   clearEnvKey();
   _session = null;
+  _syncedThisSession = false; // allow re-sync on next login
   renderHeaderAuth();
   showToast('Logged out', 'success');
 }
@@ -1655,7 +1732,13 @@ async function renderHistory() {
       <span class="saved-item-name" title="${escAttr(item.url)}">${escAttr(item.url)}</span>
       <span class="hist-status ${statusClass}">${statusText}</span>
     `;
-    const entry = { method: item.method, url: item.url, headers: JSON.parse(item.request_headers || '{}'), cookies: JSON.parse(item.request_cookies || '{}'), body: item.request_body || '' };
+    const entry = {
+      method: item.method,
+      url: item.url,
+      headers: typeof item.request_headers === 'string' ? JSON.parse(item.request_headers) : (item.request_headers || {}),
+      cookies: typeof item.request_cookies === 'string' ? JSON.parse(item.request_cookies) : (item.request_cookies || {}),
+      body: item.request_body || '',
+    };
     row.addEventListener('click', () => addRequestTab(entry));
     el.appendChild(row);
   });
@@ -1673,6 +1756,25 @@ async function clearHistory() {
       showToast('History cleared', 'success');
     } catch (e) {
       showToast('Failed to clear history', 'error');
+    }
+  }, 'Clear');
+}
+
+async function clearAllRequests() {
+  showConfirm('Clear all requests?', 'Delete all saved requests? This cannot be undone.', async () => {
+    try {
+      if (isLoggedIn()) {
+        const list = await fetchSavedRequests();
+        for (const item of list) {
+          await apiFetch(API_BASE + '/api/saved-requests/' + item.id, { method: 'DELETE' });
+        }
+      } else {
+        localStorage.removeItem('curlix:saved');
+      }
+      renderSidebar();
+      showToast('Requests cleared', 'success');
+    } catch (e) {
+      showToast('Failed to clear requests', 'error');
     }
   }, 'Clear');
 }
@@ -1695,7 +1797,14 @@ async function renderSidebar() {
       <span class="saved-item-name" title="${escAttr(item.url)}">${escAttr(item.name)}</span>
       <button class="saved-item-del" title="Delete" onclick="doDeleteSavedRequest(${item.id}, event)">×</button>
     `;
-    const req = { method: item.method, url: item.url, headers: JSON.parse(item.headers || '{}'), cookies: JSON.parse(item.cookies || '{}'), body: item.body || '', ai_desc: item.ai_desc || '' };
+    const req = {
+      method: item.method,
+      url: item.url,
+      headers: typeof item.headers === 'string' ? JSON.parse(item.headers) : (item.headers || {}),
+      cookies: typeof item.cookies === 'string' ? JSON.parse(item.cookies) : (item.cookies || {}),
+      body: item.body || '',
+      ai_desc: item.ai_desc || '',
+    };
     row.addEventListener('click', () => addRequestTab(req));
     el.appendChild(row);
   });
@@ -1911,6 +2020,7 @@ async function checkAdmin() {
   if (isLoggedIn()) await loadEnvKeyIfPresent();
   await loadSettings();
   _envList = await fetchEnvVars();
+  console.log('[sync] init env count:', _envList.length);
   renderEnv();
   await renderSidebar();
   await renderHistory();
